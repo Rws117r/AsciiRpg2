@@ -1,6 +1,7 @@
 """
-Gear Selection UI Components
+Gear Selection UI Components - FIXED VERSION
 Extracted and refactored from the original gear_selection.py
+No more display recreation to prevent fullscreen issues
 """
 
 import pygame
@@ -16,10 +17,12 @@ from ui.base_ui import wrap_text
 class GearSelector:
     """Main gear selection UI controller."""
     
-    def __init__(self, player: Player, screen_width: int, screen_height: int, font_file: str):
+    def __init__(self, player: Player, screen: pygame.Surface, font_file: str):
         self.player = player
-        self.screen_width = screen_width
-        self.screen_height = screen_height
+        # Use existing screen instead of creating new one
+        self.screen = screen
+        self.screen_width, self.screen_height = screen.get_size()
+        self.font_file = font_file
         
         # Fonts
         self.title_font = pygame.font.Font(font_file, 36)
@@ -33,8 +36,8 @@ class GearSelector:
         self.selected_index = 0
         
         # Layout
-        self.list_width = screen_width // 3
-        self.detail_width = (screen_width * 2) // 3
+        self.list_width = self.screen_width // 3
+        self.detail_width = (self.screen_width * 2) // 3
         self.list_x = 20
         self.detail_x = self.list_width + 40
         
@@ -60,6 +63,16 @@ class GearSelector:
         # Start with a free backpack
         backpack = GENERAL_GEAR["Backpack"]
         self.inventory.append(InventoryItem(backpack, 1))
+    
+    def update_screen_size(self):
+        """Update screen size if window was resized."""
+        new_size = self.screen.get_size()
+        if new_size != (self.screen_width, self.screen_height):
+            self.screen_width, self.screen_height = new_size
+            # Recalculate layout
+            self.list_width = self.screen_width // 3
+            self.detail_width = (self.screen_width * 2) // 3
+            self.detail_x = self.list_width + 40
     
     def _get_categories(self) -> List[str]:
         """Get available categories."""
@@ -266,9 +279,14 @@ class GearSelector:
         
         self.selected_index = 0
     
+    def update(self, dt: float):
+        """Update components."""
+        # Update screen size in case of resize
+        self.update_screen_size()
+    
     def draw(self, surface: pygame.Surface):
         """Draw the gear selection interface."""
-        surface.fill(COLOR_BLACK)  # Changed back to black background
+        surface.fill(COLOR_BLACK)
         
         # Title
         title = "Select Your Gear"
@@ -663,14 +681,11 @@ class GearSelector:
         """Get remaining gold after purchases."""
         return self.gold
 
-def run_gear_selection(player: Player, screen_width: int, screen_height: int, font_file: str) -> Optional[Player]:
-    """Run gear selection after character creation."""
-    pygame.init()
-    screen = pygame.display.set_mode((screen_width, screen_height))
-    pygame.display.set_caption("Gear Selection")
+def run_gear_selection_with_existing_display(player: Player, screen: pygame.Surface, font_file: str) -> Optional[Player]:
+    """Run gear selection using existing display surface."""
     clock = pygame.time.Clock()
     
-    gear_selector = GearSelector(player, screen_width, screen_height, font_file)
+    gear_selector = GearSelector(player, screen, font_file)
     
     running = True
     while running:
@@ -689,7 +704,18 @@ def run_gear_selection(player: Player, screen_width: int, screen_height: int, fo
             elif result is None:
                 return None  # Cancelled
         
+        gear_selector.update(dt)
         gear_selector.draw(screen)
         pygame.display.flip()
     
     return None
+
+# Keep the old function for backward compatibility but mark it as deprecated
+def run_gear_selection(player: Player, screen_width: int, screen_height: int, font_file: str) -> Optional[Player]:
+    """DEPRECATED: Use run_gear_selection_with_existing_display instead."""
+    print("WARNING: run_gear_selection is deprecated. Use run_gear_selection_with_existing_display.")
+    # Fallback implementation that creates its own display
+    pygame.init()
+    screen = pygame.display.set_mode((screen_width, screen_height))
+    pygame.display.set_caption("Gear Selection")
+    return run_gear_selection_with_existing_display(player, screen, font_file)

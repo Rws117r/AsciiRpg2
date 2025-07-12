@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Dungeon Explorer - Main Entry Point (Fully Modular)
+Dungeon Explorer - Main Entry Point (Fully Modular) - FIXED FULLSCREEN VERSION
 A tabletop-style RPG dungeon crawler with character creation, inventory management, and exploration.
 """
 
@@ -20,22 +20,32 @@ from config.constants import *
 from game.states import GameState
 from data.player import Player
 from game.dungeon_game import DungeonGame
-from ui.character_creation import run_character_creation
-from ui.gear_selection import run_gear_selection
+from ui.character_creation import run_character_creation_with_existing_display
+from ui.gear_selection import run_gear_selection_with_existing_display
 from ui.inventory_ui import *
 from graphics.tile_renderer import DungeonRenderer, calculate_viewport_parameters, create_fonts_for_zoom
 
 class DungeonExplorer:
-    """Main application class using fully modular architecture."""
+    """Main application class using fully modular architecture with fixed fullscreen."""
     
     def __init__(self):
         pygame.init()
         
-        # Initialize display
+        # Get desktop info before setting any display mode
+        self.desktop_info = pygame.display.Info()
+        self._desktop_size = (self.desktop_info.current_w, self.desktop_info.current_h)
+        
+        # Initialize display with proper size tracking
         self.screen_width = INITIAL_VIEWPORT_WIDTH * int(BASE_CELL_SIZE * DEFAULT_ZOOM)
         self.screen_height = INITIAL_VIEWPORT_HEIGHT * int(BASE_CELL_SIZE * DEFAULT_ZOOM) + HUD_HEIGHT
+        
+        # Create initial display with RESIZABLE flag
         self.screen = pygame.display.set_mode((self.screen_width, self.screen_height), pygame.RESIZABLE)
         pygame.display.set_caption("Dungeon Explorer")
+        
+        # Track fullscreen state properly
+        self.fullscreen = False
+        self._windowed_size = (self.screen_width, self.screen_height)
         
         # Load dungeon data
         self.dungeon_data = self.load_dungeon_data()
@@ -49,7 +59,6 @@ class DungeonExplorer:
         self.dungeon_game = None
         self.clock = pygame.time.Clock()
         self.running = True
-        self.fullscreen = False
         
         # Rendering system
         self.renderer = DungeonRenderer()
@@ -94,25 +103,80 @@ class DungeonExplorer:
             'title': pygame.font.Font(FONT_FILE, 36)
         }
     
+    def toggle_fullscreen(self):
+        """Toggle between fullscreen and windowed mode using the safest approach."""
+        try:
+            # Method 1: Try the built-in toggle first (most reliable)
+            success = pygame.display.toggle_fullscreen()
+            
+            if success:
+                self.fullscreen = not self.fullscreen
+                
+                # Update size tracking
+                if self.fullscreen:
+                    self.screen_width, self.screen_height = self._desktop_size
+                else:
+                    self.screen_width, self.screen_height = self._windowed_size
+                
+                self._update_ui_components()
+                return True
+                
+        except Exception as e:
+            print(f"toggle_fullscreen() failed: {e}")
+        
+        # Method 2: Manual toggle as fallback
+        try:
+            old_fullscreen = self.fullscreen
+            self.fullscreen = not self.fullscreen
+            
+            if self.fullscreen:
+                # Store current size before going fullscreen
+                if not old_fullscreen:
+                    self._windowed_size = self.screen.get_size()
+                
+                # Use desktop resolution for fullscreen
+                self.screen = pygame.display.set_mode(self._desktop_size, pygame.FULLSCREEN)
+                self.screen_width, self.screen_height = self._desktop_size
+            else:
+                # Return to windowed mode with stored size
+                self.screen = pygame.display.set_mode(self._windowed_size, pygame.RESIZABLE)
+                self.screen_width, self.screen_height = self._windowed_size
+            
+            self._update_ui_components()
+            return True
+            
+        except Exception as e:
+            print(f"Manual fullscreen toggle failed: {e}")
+            # Revert fullscreen state on failure
+            self.fullscreen = old_fullscreen
+            return False
+    
+    def handle_videoresize(self, event):
+        """Handle window resize events properly."""
+        if not self.fullscreen:
+            # Only handle resize in windowed mode
+            self.screen_width = event.w
+            self.screen_height = event.h
+            self._windowed_size = (event.w, event.h)
+            
+            # In Pygame 2, the surface is automatically resized
+            # Just update our UI components
+            self._update_ui_components()
+    
     def handle_events(self):
-        """Handle pygame events."""
+        """Handle pygame events with proper resize and fullscreen support."""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
             
             elif event.type == pygame.VIDEORESIZE:
-                if not self.fullscreen:
-                    self.screen = pygame.display.set_mode(event.size, pygame.RESIZABLE)
-                    self.screen_width, self.screen_height = event.size
-                    self._update_ui_components()
+                self.handle_videoresize(event)
             
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     self._handle_escape_key()
-                
                 elif event.key == pygame.K_F11:
                     self.toggle_fullscreen()
-                
                 else:
                     self._handle_keydown(event)
             
@@ -283,18 +347,6 @@ class DungeonExplorer:
                 
                 self.equipment_selection_mode = False
     
-    def toggle_fullscreen(self):
-        """Toggle between fullscreen and windowed mode."""
-        self.fullscreen = not self.fullscreen
-        if self.fullscreen:
-            info = pygame.display.Info()
-            self.screen = pygame.display.set_mode((info.current_w, info.current_h), pygame.FULLSCREEN)
-            self.screen_width, self.screen_height = info.current_w, info.current_h
-        else:
-            self.screen = pygame.display.set_mode((self.screen_width, self.screen_height), pygame.RESIZABLE)
-        
-        self._update_ui_components()
-    
     def _update_ui_components(self):
         """Update UI components when screen size changes."""
         self.inventory_ui = InventoryUI(self.screen_width, self.screen_height, FONT_FILE)
@@ -318,37 +370,31 @@ class DungeonExplorer:
             self.start_character_creation()
     
     def start_character_creation(self):
-        """Start the character creation process."""
-        # Store current fullscreen state
-        was_fullscreen = self.fullscreen
-        current_width = self.screen_width
-        current_height = self.screen_height
+        """Start the character creation process without destroying the display."""
+        # Store current display state
+        current_fullscreen = self.fullscreen
         
-        # Hide current display for character creation
-        pygame.display.quit()
+        # DON'T call pygame.display.quit() - this causes the problem!
+        # Instead, just change the window caption temporarily
+        pygame.display.set_caption("Character Creation")
         
-        # Run character creation
-        created_player = run_character_creation(current_width, current_height, FONT_FILE)
+        # Run character creation in the same display context
+        created_player = run_character_creation_with_existing_display(
+            self.screen, FONT_FILE
+        )
         
         if created_player is None:
             # Character creation was cancelled
             self.running = False
             return
         
-        # Character creation successful - restore display with same fullscreen state
-        if was_fullscreen:
-            info = pygame.display.Info()
-            self.screen = pygame.display.set_mode((info.current_w, info.current_h), pygame.FULLSCREEN)
-            self.screen_width = info.current_w
-            self.screen_height = info.current_h
-            self.fullscreen = True
-        else:
-            self.screen = pygame.display.set_mode((current_width, current_height), pygame.RESIZABLE)
-            self.screen_width = current_width
-            self.screen_height = current_height
-            self.fullscreen = False
-        
+        # Restore the main game caption
         pygame.display.set_caption(f"{self.dungeon_data.get('title', 'Dungeon')}")
+        
+        # Maintain fullscreen state if we were in it
+        if current_fullscreen and not self.fullscreen:
+            pygame.display.toggle_fullscreen()
+            self.fullscreen = True
         
         self.player = created_player
         
@@ -362,10 +408,10 @@ class DungeonExplorer:
     
     def draw_main_menu(self):
         """Draw the main menu screen."""
-        self.screen.fill(COLOR_BLACK)  # Changed back to black background
+        self.screen.fill(COLOR_BLACK)
         
         # Title
-        title_surf = self.fonts['large'].render("Dungeon Explorer", True, COLOR_WHITE)  # White text on black background
+        title_surf = self.fonts['large'].render("Dungeon Explorer", True, COLOR_WHITE)
         title_rect = title_surf.get_rect(centerx=self.screen_width/2, top=self.screen_height * 0.2)
         self.screen.blit(title_surf, title_rect)
 
@@ -383,13 +429,13 @@ class DungeonExplorer:
         pygame.draw.rect(self.screen, COLOR_BUTTON_NORMAL, start_button_rect)
         pygame.draw.rect(self.screen, COLOR_WHITE, start_button_rect, 2)
         
-        button_text_surf = self.fonts['medium'].render("Create New Character", True, COLOR_WHITE)  # White text on button
+        button_text_surf = self.fonts['medium'].render("Create New Character", True, COLOR_WHITE)
         button_text_rect = button_text_surf.get_rect(center=start_button_rect.center)
         self.screen.blit(button_text_surf, button_text_rect)
         
         # Instructions
         inst_text = "Press ESC to quit | F11 for fullscreen"
-        inst_surf = self.fonts['medium'].render(inst_text, True, COLOR_WHITE)  # White text on black background
+        inst_surf = self.fonts['medium'].render(inst_text, True, COLOR_WHITE)
         inst_rect = inst_surf.get_rect(centerx=self.screen_width/2, bottom=self.screen_height * 0.9)
         self.screen.blit(inst_surf, inst_rect)
     
@@ -579,9 +625,9 @@ class DungeonExplorer:
     
     def run(self):
         """Main game loop."""
-        print("🚀 Starting Dungeon Explorer (Fully Modular)...")
+        print("🚀 Starting Dungeon Explorer (Fully Modular - FIXED FULLSCREEN)...")
         print(f"📖 Loaded dungeon: {self.dungeon_data.get('title', 'Unknown')}")
-        print("✨ Using new modular architecture!")
+        print("✨ Using new modular architecture with fixed fullscreen!")
         
         while self.running:
             # Handle events

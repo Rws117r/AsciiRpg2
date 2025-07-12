@@ -1,6 +1,7 @@
 """
-Character Creation UI Components
+Character Creation UI Components - FIXED VERSION
 Extracted and refactored from the original character_creation.py
+No more display recreation to prevent fullscreen issues
 """
 
 import pygame
@@ -25,9 +26,11 @@ from character_creation import (
 class CharacterCreator:
     """Main character creation UI controller."""
     
-    def __init__(self, screen_width: int, screen_height: int, font_file: str):
-        self.screen_width = screen_width
-        self.screen_height = screen_height
+    def __init__(self, screen: pygame.Surface, font_file: str):
+        # Use existing screen instead of creating new one
+        self.screen = screen
+        self.screen_width, self.screen_height = screen.get_size()
+        self.font_file = font_file
         
         # Initialize fonts
         self.title_font = pygame.font.Font(font_file, 36)
@@ -62,31 +65,23 @@ class CharacterCreator:
         self.reroll_button = None
         
         # Layout
-        self.list_width = screen_width // 3
-        self.detail_width = (screen_width * 2) // 3
+        self.list_width = self.screen_width // 3
+        self.detail_width = (self.screen_width * 2) // 3
         self.list_x = 20
         self.detail_x = self.list_width + 40
         
-        self.fullscreen = False
         self._setup_ui()
     
-    def toggle_fullscreen(self):
-        """Toggle fullscreen mode and adjust layout."""
-        self.fullscreen = not self.fullscreen
-        if self.fullscreen:
-            info = pygame.display.Info()
-            pygame.display.set_mode((info.current_w, info.current_h), pygame.FULLSCREEN)
-            self.screen_width = info.current_w
-            self.screen_height = info.current_h
-        else:
-            pygame.display.set_mode((800, 600))
-            self.screen_width = 800
-            self.screen_height = 600
-        
-        # Recalculate layout
-        self.list_width = self.screen_width // 3
-        self.detail_width = (self.screen_width * 2) // 3
-        self.detail_x = self.list_width + 40
+    def update_screen_size(self):
+        """Update screen size if window was resized."""
+        new_size = self.screen.get_size()
+        if new_size != (self.screen_width, self.screen_height):
+            self.screen_width, self.screen_height = new_size
+            # Recalculate layout
+            self.list_width = self.screen_width // 3
+            self.detail_width = (self.screen_width * 2) // 3
+            self.detail_x = self.list_width + 40
+            self._setup_ui()
     
     def get_stat_modifier(self, stat_value: int) -> int:
         """Calculate ability score modifier."""
@@ -199,10 +194,6 @@ class CharacterCreator:
     
     def handle_event(self, event: pygame.event.Event) -> Optional[bool]:
         """Handle input events. Returns True to complete, None to cancel, False to continue."""
-        if event.type == pygame.KEYDOWN and event.key == pygame.K_F11:
-            self.toggle_fullscreen()
-            return False
-        
         # Handle text input
         if self.text_input and self.state == CharCreationState.NAME_INPUT:
             if self.text_input.handle_event(event):
@@ -386,10 +377,13 @@ class CharacterCreator:
         """Update components."""
         if self.text_input:
             self.text_input.update(dt)
+        
+        # Update screen size in case of resize
+        self.update_screen_size()
     
     def draw(self, surface: pygame.Surface):
         """Draw the character creation interface."""
-        surface.fill(COLOR_BLACK)  # Changed back to black background
+        surface.fill(COLOR_BLACK)
         
         # Draw title
         title = self._get_title()
@@ -616,7 +610,7 @@ class CharacterCreator:
         instructions = []
         
         if self.state == CharCreationState.NAME_INPUT:
-            instructions = ["Enter your name and press ENTER", "Click Random for a random name", "F11 for fullscreen"]
+            instructions = ["Enter your name and press ENTER", "Click Random for a random name"]
         elif self.state == CharCreationState.STAT_ROLLING:
             instructions = ["SPACE or Roll Stats button to roll", "Press ENTER or Accept to continue", "Reroll if no stat is 14+"]
         elif self.state in [CharCreationState.RACE_SELECTION, CharCreationState.CLASS_SELECTION, 
@@ -699,14 +693,11 @@ class CharacterCreator:
             max_gear_slots=max(self.stats[0], 10)  # Strength or 10, whichever is higher
         )
 
-def run_character_creation(screen_width: int, screen_height: int, font_file: str) -> Optional[Player]:
-    """Main function to run character creation process."""
-    pygame.init()
-    screen = pygame.display.set_mode((screen_width, screen_height))
-    pygame.display.set_caption("Character Creation")
+def run_character_creation_with_existing_display(screen: pygame.Surface, font_file: str) -> Optional[Player]:
+    """Main function to run character creation process using existing display."""
     clock = pygame.time.Clock()
     
-    creator = CharacterCreator(screen_width, screen_height, font_file)
+    creator = CharacterCreator(screen, font_file)
     
     running = True
     while running:
@@ -731,11 +722,11 @@ def run_character_creation(screen_width: int, screen_height: int, font_file: str
             
             # Handle gear selection transition
             if creator.state == CharCreationState.GEAR_SELECTION:
-                # Import and run gear selection
+                # Import and run gear selection using existing display
                 try:
-                    from gear_selection import run_gear_selection
+                    from ui.gear_selection import run_gear_selection_with_existing_display
                     temp_player = creator.create_player()
-                    gear_result = run_gear_selection(temp_player, screen_width, screen_height, font_file)
+                    gear_result = run_gear_selection_with_existing_display(temp_player, screen, font_file)
                     if gear_result:
                         # Gear selection completed successfully - store the result
                         creator.completed_player = gear_result
@@ -754,3 +745,13 @@ def run_character_creation(screen_width: int, screen_height: int, font_file: str
         pygame.display.flip()
     
     return None
+
+# Keep the old function for backward compatibility but mark it as deprecated
+def run_character_creation(screen_width: int, screen_height: int, font_file: str) -> Optional[Player]:
+    """DEPRECATED: Use run_character_creation_with_existing_display instead."""
+    print("WARNING: run_character_creation is deprecated. Use run_character_creation_with_existing_display.")
+    # Fallback implementation that creates its own display
+    pygame.init()
+    screen = pygame.display.set_mode((screen_width, screen_height))
+    pygame.display.set_caption("Character Creation")
+    return run_character_creation_with_existing_display(screen, font_file)
