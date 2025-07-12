@@ -1,3 +1,116 @@
+"""
+Complete Enhanced Character Creation UI
+Integrated with birth sign system, updated spell system, and cosmic destiny.
+"""
+
+import pygame
+import random
+import time
+from typing import List, Tuple, Optional, Dict
+from enum import Enum
+
+# Import from modular structure
+from config.constants import *
+from data.player import Player, get_stat_modifier, create_enhanced_player
+from game.states import CharCreationState
+from ui.base_ui import Button, TextInput, wrap_text
+
+# New systems integration
+try:
+    from data.birth_sign_system import (
+        BirthSignCalculator, BirthSignGenerator, add_birth_sign_to_player,
+        format_birth_sign_for_display
+    )
+    from data.updated_spell_systems import add_spellcasting_to_character
+    ENHANCED_SYSTEMS_AVAILABLE = True
+except ImportError:
+    # Graceful fallback if enhanced systems aren't available yet
+    ENHANCED_SYSTEMS_AVAILABLE = False
+    print("Enhanced systems not available - using basic character creation")
+
+# Enhanced Character Creation States
+class EnhancedCharCreationState(Enum):
+    """Enhanced character creation states including birth sign calculation."""
+    NAME_INPUT = 0
+    STAT_ROLLING = 1
+    RACE_SELECTION = 2
+    CLASS_SELECTION = 3
+    ALIGNMENT_SELECTION = 4
+    BIRTH_DATE_INPUT = 5      # NEW: Birth date and age input
+    BIRTH_SIGN_REVIEW = 6     # NEW: Review cosmic destiny
+    GOD_SELECTION = 7
+    SPELL_SELECTION = 8
+    GEAR_SELECTION = 9
+    STATS_REVIEW = 10
+    COMPLETE = 11
+
+# Character creation data with enhanced details
+ENHANCED_RACES = {
+    "Human": {
+        "description": "Versatile and ambitious, humans adapt quickly to any situation.",
+        "traits": "Bonus skill point, extra feat, versatile",
+        "stats": ["+1 to any stat of choice"],
+        "abilities": ["Bonus skill point", "Extra starting feat", "Diplomatic bonus"]
+    },
+    "Elf": {
+        "description": "Graceful and long-lived, with natural magical affinity.",
+        "traits": "Keen senses, magic resistance, night vision",
+        "stats": ["+2 Dexterity"],
+        "abilities": ["Night vision", "Magic resistance", "Keen hearing and sight"]
+    },
+    "Dwarf": {
+        "description": "Sturdy and resilient, masters of stone and metal.",
+        "traits": "Poison resistance, stone cunning, combat training",
+        "stats": ["+2 Constitution"],
+        "abilities": ["Poison resistance", "Stone cunning", "Weapon familiarity"]
+    },
+    "Halfling": {
+        "description": "Small but brave, with remarkable luck and stealth.",
+        "traits": "Lucky, brave, nimble",
+        "stats": ["+2 Dexterity"],
+        "abilities": ["Lucky re-rolls", "Brave (fear resistance)", "Small size benefits"]
+    },
+    "Half-Orc": {
+        "description": "Strong and fierce, caught between two worlds.",
+        "traits": "Relentless endurance, savage attacks",
+        "stats": ["+2 Strength", "+1 Constitution"],
+        "abilities": ["Relentless endurance", "Savage critical hits", "Darkvision"]
+    },
+    "Goblin": {
+        "description": "Small, clever, and mischievous creatures of shadow.",
+        "traits": "Nimble escape, stealth mastery",
+        "stats": ["+2 Dexterity", "-1 Constitution"],
+        "abilities": ["Stealth expertise", "Small size", "Nimble escape"]
+    }
+}
+
+ENHANCED_CLASSES = {
+    "Fighter": {
+        "description": "Master of weapons and armor, born for battle.",
+        "traits": "Combat expertise, weapon mastery, high hit points",
+        "stats": ["High Strength or Dexterity recommended"],
+        "abilities": ["Second Wind", "Weapon specialization", "Combat maneuvers", "Extra gear slots from Constitution"]
+    },
+    "Priest": {
+        "description": "Divine spellcaster serving the gods with healing and holy magic.",
+        "traits": "Divine magic, healing powers, undead turning",
+        "stats": ["High Wisdom for spellcasting"],
+        "abilities": ["Divine spellcasting", "Channel divinity", "Healing touch", "Holy magic resistance"]
+    },
+    "Wizard": {
+        "description": "Arcane spellcaster wielding reality-bending magic through study.",
+        "traits": "Arcane magic, spell research, magical knowledge",
+        "stats": ["High Intelligence for spellcasting"],
+        "abilities": ["Arcane spellcasting", "Spell research", "Magical item creation", "Lore mastery"]
+    },
+    "Thief": {
+        "description": "Stealthy scout skilled in locks, traps, and shadows.",
+        "traits": "Stealth, lockpicking, sneak attacks",
+        "stats": ["High Dexterity for skills"],
+        "abilities": ["Sneak attack", "Lockpicking", "Trap detection", "Stealth mastery"]
+    }
+}
+
 ENHANCED_ALIGNMENTS = {
     "Lawful": {
         "description": "Believes in order, tradition, and following established rules.",
@@ -457,9 +570,10 @@ class EnhancedCharacterCreator:
             elif self.state != EnhancedCharCreationState.SPELL_SELECTION:
                 self._next_state()
         elif self.state == EnhancedCharCreationState.STATS_REVIEW:
-            self.state = EnhancedCharCreationState.GEAR_SELECTION
+            return True  # Complete character creation
         
         self._setup_ui()
+        return False
     
     def _setup_spell_selection(self):
         """Setup spell selection."""
@@ -468,6 +582,129 @@ class EnhancedCharacterCreator:
             self.spells_to_select = 2
         elif self.character_class == "Wizard":
             self.spells_to_select = 3
+    
+    def _handle_navigation(self, direction: int):
+        """Handle up/down navigation."""
+        if self.state in [EnhancedCharCreationState.RACE_SELECTION, EnhancedCharCreationState.CLASS_SELECTION, 
+                         EnhancedCharCreationState.ALIGNMENT_SELECTION, EnhancedCharCreationState.GOD_SELECTION,
+                         EnhancedCharCreationState.SPELL_SELECTION]:
+            options = self._get_current_options()
+            if options:
+                self.selected_index = (self.selected_index + direction) % len(options)
+    
+    def _make_selection(self, index: int) -> bool:
+        """Make a selection for current state."""
+        options = self._get_current_options()
+        if index < len(options):
+            if self.state == EnhancedCharCreationState.RACE_SELECTION:
+                self.race = options[index]
+            elif self.state == EnhancedCharCreationState.CLASS_SELECTION:
+                self.character_class = options[index]
+            elif self.state == EnhancedCharCreationState.ALIGNMENT_SELECTION:
+                self.alignment = options[index]
+            elif self.state == EnhancedCharCreationState.GOD_SELECTION:
+                self.god = options[index]
+            elif self.state == EnhancedCharCreationState.SPELL_SELECTION:
+                spell = options[index]
+                if spell not in self.selected_spells:
+                    self.selected_spells.append(spell)
+                    if len(self.selected_spells) >= self.spells_to_select:
+                        return True
+        return False
+    
+    def _randomize_current_selection(self):
+        """Randomize current selection."""
+        if self.state == EnhancedCharCreationState.NAME_INPUT:
+            # Generate random name based on race (if known) or human default
+            race_for_name = self.race if self.race else "Human"
+            gender = random.choice(["male", "female"])
+            names = ENHANCED_NAMES.get(race_for_name, ENHANCED_NAMES["Human"])
+            
+            first_name = random.choice(names[gender])
+            last_name = random.choice(names["surname"]) if "surname" in names else ""
+            
+            self.text_input.text = f"{first_name} {last_name}".strip()
+    
+    def _roll_new_stats(self):
+        """Roll new stats."""
+        new_stats = self.roll_stats()
+        self.stat_rolls_history.append(new_stats)
+        self.current_roll_set = len(self.stat_rolls_history) - 1
+        self.stats = new_stats[:]
+    
+    def _next_state(self):
+        """Advance to next state."""
+        if self.state == EnhancedCharCreationState.NAME_INPUT:
+            self.name = self.text_input.text.strip()
+            self.state = EnhancedCharCreationState.STAT_ROLLING
+        elif self.state == EnhancedCharCreationState.STAT_ROLLING:
+            self.state = EnhancedCharCreationState.RACE_SELECTION
+        elif self.state == EnhancedCharCreationState.RACE_SELECTION:
+            self.state = EnhancedCharCreationState.CLASS_SELECTION
+        elif self.state == EnhancedCharCreationState.CLASS_SELECTION:
+            self.state = EnhancedCharCreationState.ALIGNMENT_SELECTION
+        elif self.state == EnhancedCharCreationState.ALIGNMENT_SELECTION:
+            # NEW: Go to birth date input
+            self.state = EnhancedCharCreationState.BIRTH_DATE_INPUT
+        elif self.state == EnhancedCharCreationState.BIRTH_DATE_INPUT:
+            # NEW: Go to birth sign review
+            self.state = EnhancedCharCreationState.BIRTH_SIGN_REVIEW
+        elif self.state == EnhancedCharCreationState.BIRTH_SIGN_REVIEW:
+            # Continue to god selection if priest
+            if self.character_class == "Priest":
+                self.state = EnhancedCharCreationState.GOD_SELECTION
+            elif self.character_class in ["Priest", "Wizard"]:
+                self._setup_spell_selection()
+                self.state = EnhancedCharCreationState.SPELL_SELECTION
+            else:
+                self.state = EnhancedCharCreationState.GEAR_SELECTION
+        elif self.state == EnhancedCharCreationState.GOD_SELECTION:
+            if self.character_class in ["Priest", "Wizard"]:
+                self._setup_spell_selection()
+                self.state = EnhancedCharCreationState.SPELL_SELECTION
+            else:
+                self.state = EnhancedCharCreationState.GEAR_SELECTION
+        elif self.state == EnhancedCharCreationState.SPELL_SELECTION:
+            self.state = EnhancedCharCreationState.GEAR_SELECTION
+        elif self.state == EnhancedCharCreationState.GEAR_SELECTION:
+            self.state = EnhancedCharCreationState.STATS_REVIEW
+        elif self.state == EnhancedCharCreationState.STATS_REVIEW:
+            self.state = EnhancedCharCreationState.COMPLETE
+        
+        self._setup_ui()
+    
+    def _previous_state(self):
+        """Go back to previous state."""
+        if self.state == EnhancedCharCreationState.STAT_ROLLING:
+            self.state = EnhancedCharCreationState.NAME_INPUT
+        elif self.state == EnhancedCharCreationState.RACE_SELECTION:
+            self.state = EnhancedCharCreationState.STAT_ROLLING
+        elif self.state == EnhancedCharCreationState.CLASS_SELECTION:
+            self.state = EnhancedCharCreationState.RACE_SELECTION
+        elif self.state == EnhancedCharCreationState.ALIGNMENT_SELECTION:
+            self.state = EnhancedCharCreationState.CLASS_SELECTION
+        elif self.state == EnhancedCharCreationState.BIRTH_DATE_INPUT:
+            self.state = EnhancedCharCreationState.ALIGNMENT_SELECTION
+        elif self.state == EnhancedCharCreationState.BIRTH_SIGN_REVIEW:
+            self.state = EnhancedCharCreationState.BIRTH_DATE_INPUT
+        elif self.state == EnhancedCharCreationState.GOD_SELECTION:
+            self.state = EnhancedCharCreationState.BIRTH_SIGN_REVIEW
+        elif self.state == EnhancedCharCreationState.SPELL_SELECTION:
+            if self.character_class == "Priest":
+                self.state = EnhancedCharCreationState.GOD_SELECTION
+            else:
+                self.state = EnhancedCharCreationState.BIRTH_SIGN_REVIEW
+        elif self.state == EnhancedCharCreationState.GEAR_SELECTION:
+            if self.character_class in ["Priest", "Wizard"]:
+                self.state = EnhancedCharCreationState.SPELL_SELECTION
+            elif self.character_class == "Priest":
+                self.state = EnhancedCharCreationState.GOD_SELECTION
+            else:
+                self.state = EnhancedCharCreationState.BIRTH_SIGN_REVIEW
+        elif self.state == EnhancedCharCreationState.STATS_REVIEW:
+            self.state = EnhancedCharCreationState.GEAR_SELECTION
+        
+        self._setup_ui()
     
     def update(self, dt: float):
         """Update components."""
@@ -596,7 +833,7 @@ class EnhancedCharacterCreator:
         
         y = center_y - 200
         for i, instruction in enumerate(instructions):
-            if instruction == self.birth_date_input or "(type your birth date)":
+            if instruction == self.birth_date_input or instruction == "(type your birth date)":
                 color = COLOR_GOLD if self.birth_date_input else COLOR_WHITE
                 font = self.medium_font
             elif instruction.startswith("Format:") or instruction.startswith("Available"):
@@ -966,7 +1203,7 @@ class EnhancedCharacterCreator:
         
         return player
 
-def run_enhanced_character_creation_with_existing_display(screen: pygame.Surface, font_file: str) -> Optional[Player]:
+def run_character_creation_with_existing_display(screen: pygame.Surface, font_file: str) -> Optional[Player]:
     """Main function to run enhanced character creation process using existing display."""
     clock = pygame.time.Clock()
     
@@ -1013,14 +1250,135 @@ def run_enhanced_character_creation_with_existing_display(screen: pygame.Surface
     
     return None
 
-# Example usage
+# Keep the old function for backward compatibility but mark it as deprecated
+def run_enhanced_character_creation(player_class, screen_width: int, screen_height: int, font_file: str) -> Optional[Player]:
+    """DEPRECATED: Use run_character_creation_with_existing_display instead."""
+    print("WARNING: run_enhanced_character_creation is deprecated. Use run_character_creation_with_existing_display.")
+    # Fallback implementation that creates its own display
+    pygame.init()
+    screen = pygame.display.set_mode((screen_width, screen_height))
+    pygame.display.set_caption("Enhanced Character Creation")
+    return run_character_creation_with_existing_display(screen, font_file)
+
+# Integration helper functions for birth sign system
+def integrate_birth_sign_bonuses(player: Player, birth_sign) -> Player:
+    """Integrate birth sign bonuses into existing player character."""
+    if not ENHANCED_SYSTEMS_AVAILABLE or not birth_sign:
+        return player
+    
+    # Apply stat bonuses
+    for stat, bonus in birth_sign.stat_bonuses.items():
+        if hasattr(player, stat):
+            current_value = getattr(player, stat)
+            setattr(player, stat, current_value + bonus)
+    
+    # Add special abilities
+    if not hasattr(player, 'special_abilities'):
+        player.special_abilities = []
+    player.special_abilities.extend(birth_sign.special_abilities)
+    
+    # Store birth sign data
+    player.birth_sign = birth_sign
+    player.birth_sign_title = birth_sign.combined_title
+    player.birth_sign_prophecy = birth_sign.prophecy_text
+    
+    return player
+
+def assign_starting_spells_by_birth_sign(player: Player, birth_sign) -> List[str]:
+    """Assign additional starting spells based on birth sign."""
+    if not ENHANCED_SYSTEMS_AVAILABLE or not birth_sign:
+        return []
+    
+    bonus_spells = []
+    
+    # Solar archetype bonuses
+    archetype_spells = {
+        "The Endurer": ["Runic Ward"] if player.character_class == "Wizard" else ["Velmari's Hearthlight"],
+        "The Rekindled": ["Embermarch Coals"] if player.character_class == "Wizard" else ["Zyrix's Fury"],
+        "The Awakener": ["Feather Fall"] if player.character_class == "Wizard" else ["Nymbril's Call"],
+        "The Verdant": ["Greentide's Grasp"] if player.character_class == "Wizard" else ["Serentha's Touch"],
+        "The Shifting": ["Shifting Shadow"] if player.character_class == "Wizard" else ["Olvenar's Whisper"],
+        "The Veiled": ["Arcane Sight"] if player.character_class == "Wizard" else ["Vhalor's Weariness"]
+    }
+    
+    archetype_name = birth_sign.solar_archetype.value[0]
+    if archetype_name in archetype_spells:
+        bonus_spells.extend(archetype_spells[archetype_name])
+    
+    # Lunar influence bonuses
+    for moon_name, (imprint, phase_value) in birth_sign.lunar_imprints.items():
+        if imprint.name == "EMPOWERED":
+            if moon_name == "Myrr" and player.character_class == "Wizard":
+                bonus_spells.append("Duskwane Drowse")
+            elif moon_name == "Caelyra" and player.character_class == "Priest":
+                bonus_spells.append("Caedros's Aegis")
+            elif moon_name == "Velmara":
+                bonus_spells.append("Continual Flame" if player.character_class == "Wizard" else "Mercy's Relief")
+    
+    return bonus_spells
+
+def create_character_with_full_integration(name: str, race: str, character_class: str, 
+                                         alignment: str, stats: List[int], 
+                                         birth_month: str, birth_day: int, age: int,
+                                         god: str = "", selected_spells: List[str] = None) -> Player:
+    """Create a character with full integration of all systems."""
+    # Create enhanced player
+    player = create_enhanced_player(
+        name=name,
+        race=race,
+        character_class=character_class,
+        alignment=alignment,
+        stats=stats,
+        birth_month=birth_month,
+        birth_day=birth_day,
+        age=age
+    )
+    
+    # Set god
+    player.god = god
+    
+    # Calculate and apply birth sign if available
+    if ENHANCED_SYSTEMS_AVAILABLE:
+        try:
+            birth_sign = BirthSignGenerator.generate_birth_sign_from_date(
+                birth_month, birth_day, age
+            )
+            player = integrate_birth_sign_bonuses(player, birth_sign)
+            
+            # Add spellcasting system
+            add_spellcasting_to_character(player)
+            
+            # Assign starting spells
+            if selected_spells:
+                player.starting_spells = selected_spells[:]
+                player.known_spells = selected_spells[:]
+                
+                # Learn spells in spellcaster if available
+                if player.spellcaster:
+                    for spell_name in selected_spells:
+                        player.spellcaster.learn_spell(spell_name)
+                
+                # Add birth sign bonus spells
+                bonus_spells = assign_starting_spells_by_birth_sign(player, birth_sign)
+                for spell_name in bonus_spells:
+                    if spell_name not in player.known_spells:
+                        player.known_spells.append(spell_name)
+                        if player.spellcaster:
+                            player.spellcaster.learn_spell(spell_name)
+        
+        except Exception as e:
+            print(f"Warning: Could not apply enhanced systems: {e}")
+    
+    return player
+
+# Example usage and testing
 if __name__ == "__main__":
     # Test the enhanced character creation
     pygame.init()
     screen = pygame.display.set_mode((1200, 800))
     pygame.display.set_caption("Enhanced Character Creation Test")
     
-    player = run_enhanced_character_creation_with_existing_display(screen, FONT_FILE)
+    player = run_character_creation_with_existing_display(screen, FONT_FILE)
     
     if player:
         print("=== CHARACTER CREATED ===")
@@ -1029,243 +1387,3 @@ if __name__ == "__main__":
             print(line)
     
     pygame.quit()
-            return True  # Complete character creation
-        
-        return False
-    
-    def _handle_navigation(self, direction: int):
-        """Handle up/down navigation."""
-        if self.state in [EnhancedCharCreationState.RACE_SELECTION, EnhancedCharCreationState.CLASS_SELECTION, 
-                         EnhancedCharCreationState.ALIGNMENT_SELECTION, EnhancedCharCreationState.GOD_SELECTION,
-                         EnhancedCharCreationState.SPELL_SELECTION]:
-            options = self._get_current_options()
-            if options:
-                self.selected_index = (self.selected_index + direction) % len(options)
-    
-    def _make_selection(self, index: int) -> bool:
-        """Make a selection for current state."""
-        options = self._get_current_options()
-        if index < len(options):
-            if self.state == EnhancedCharCreationState.RACE_SELECTION:
-                self.race = options[index]
-            elif self.state == EnhancedCharCreationState.CLASS_SELECTION:
-                self.character_class = options[index]
-            elif self.state == EnhancedCharCreationState.ALIGNMENT_SELECTION:
-                self.alignment = options[index]
-            elif self.state == EnhancedCharCreationState.GOD_SELECTION:
-                self.god = options[index]
-            elif self.state == EnhancedCharCreationState.SPELL_SELECTION:
-                spell = options[index]
-                if spell not in self.selected_spells:
-                    self.selected_spells.append(spell)
-                    if len(self.selected_spells) >= self.spells_to_select:
-                        return True
-        return False
-    
-    def _randomize_current_selection(self):
-        """Randomize current selection."""
-        if self.state == EnhancedCharCreationState.NAME_INPUT:
-            # Generate random name based on race (if known) or human default
-            race_for_name = self.race if self.race else "Human"
-            gender = random.choice(["male", "female"])
-            names = ENHANCED_NAMES.get(race_for_name, ENHANCED_NAMES["Human"])
-            
-            first_name = random.choice(names[gender])
-            last_name = random.choice(names["surname"]) if "surname" in names else ""
-            
-            self.text_input.text = f"{first_name} {last_name}".strip()
-    
-    def _roll_new_stats(self):
-        """Roll new stats."""
-        new_stats = self.roll_stats()
-        self.stat_rolls_history.append(new_stats)
-        self.current_roll_set = len(self.stat_rolls_history) - 1
-        self.stats = new_stats[:]
-    
-    def _next_state(self):
-        """Advance to next state."""
-        if self.state == EnhancedCharCreationState.NAME_INPUT:
-            self.name = self.text_input.text.strip()
-            self.state = EnhancedCharCreationState.STAT_ROLLING
-        elif self.state == EnhancedCharCreationState.STAT_ROLLING:
-            self.state = EnhancedCharCreationState.RACE_SELECTION
-        elif self.state == EnhancedCharCreationState.RACE_SELECTION:
-            self.state = EnhancedCharCreationState.CLASS_SELECTION
-        elif self.state == EnhancedCharCreationState.CLASS_SELECTION:
-            self.state = EnhancedCharCreationState.ALIGNMENT_SELECTION
-        elif self.state == EnhancedCharCreationState.ALIGNMENT_SELECTION:
-            # NEW: Go to birth date input
-            self.state = EnhancedCharCreationState.BIRTH_DATE_INPUT
-        elif self.state == EnhancedCharCreationState.BIRTH_DATE_INPUT:
-            # NEW: Go to birth sign review
-            self.state = EnhancedCharCreationState.BIRTH_SIGN_REVIEW
-        elif self.state == EnhancedCharCreationState.BIRTH_SIGN_REVIEW:
-            # Continue to god selection if priest
-            if self.character_class == "Priest":
-                self.state = EnhancedCharCreationState.GOD_SELECTION
-            elif self.character_class in ["Priest", "Wizard"]:
-                self._setup_spell_selection()
-                self.state = EnhancedCharCreationState.SPELL_SELECTION
-            else:
-                self.state = EnhancedCharCreationState.GEAR_SELECTION
-        elif self.state == EnhancedCharCreationState.GOD_SELECTION:
-            if self.character_class in ["Priest", "Wizard"]:
-                self._setup_spell_selection()
-                self.state = EnhancedCharCreationState.SPELL_SELECTION
-            else:
-                self.state = EnhancedCharCreationState.GEAR_SELECTION
-        elif self.state == EnhancedCharCreationState.SPELL_SELECTION:
-            self.state = EnhancedCharCreationState.GEAR_SELECTION
-        elif self.state == EnhancedCharCreationState.GEAR_SELECTION:
-            self.state = EnhancedCharCreationState.STATS_REVIEW
-        elif self.state == EnhancedCharCreationState.STATS_REVIEW:
-            self.state = EnhancedCharCreationState.COMPLETE
-        
-        self._setup_ui()
-    
-    def _previous_state(self):
-        """Go back to previous state."""
-        if self.state == EnhancedCharCreationState.STAT_ROLLING:
-            self.state = EnhancedCharCreationState.NAME_INPUT
-        elif self.state == EnhancedCharCreationState.RACE_SELECTION:
-            self.state = EnhancedCharCreationState.STAT_ROLLING
-        elif self.state == EnhancedCharCreationState.CLASS_SELECTION:
-            self.state = EnhancedCharCreationState.RACE_SELECTION
-        elif self.state == EnhancedCharCreationState.ALIGNMENT_SELECTION:
-            self.state = EnhancedCharCreationState.CLASS_SELECTION
-        elif self.state == EnhancedCharCreationState.BIRTH_DATE_INPUT:
-            self.state = EnhancedCharCreationState.ALIGNMENT_SELECTION
-        elif self.state == EnhancedCharCreationState.BIRTH_SIGN_REVIEW:
-            self.state = EnhancedCharCreationState.BIRTH_DATE_INPUT
-        elif self.state == EnhancedCharCreationState.GOD_SELECTION:
-            self.state = EnhancedCharCreationState.BIRTH_SIGN_REVIEW
-        elif self.state == EnhancedCharCreationState.SPELL_SELECTION:
-            if self.character_class == "Priest":
-                self.state = EnhancedCharCreationState.GOD_SELECTION
-            else:
-                self.state = EnhancedCharCreationState.BIRTH_SIGN_REVIEW
-        elif self.state == EnhancedCharCreationState.GEAR_SELECTION:
-            if self.character_class in ["Priest", "Wizard"]:
-                self.state = EnhancedCharCreationState.SPELL_SELECTION
-            elif self.character_class == "Priest":
-                self.state = EnhancedCharCreationState.GOD_SELECTION
-            else:
-                self.state = EnhancedCharCreationState.BIRTH_SIGN_REVIEW
-        elif self.state == EnhancedCharCreationState.STATS_REVIEW:"""
-Complete Enhanced Character Creation UI
-Integrated with birth sign system, updated spell system, and cosmic destiny.
-"""
-
-import pygame
-import random
-import time
-from typing import List, Tuple, Optional, Dict
-from enum import Enum
-
-# Import from modular structure
-from config.constants import *
-from data.player import Player, get_stat_modifier, create_enhanced_player
-from game.states import CharCreationState
-from ui.base_ui import Button, TextInput, wrap_text
-
-# New systems integration
-try:
-    from data.birth_sign_system import (
-        BirthSignCalculator, BirthSignGenerator, add_birth_sign_to_player,
-        format_birth_sign_for_display
-    )
-    from data.updated_spell_systems import add_spellcasting_to_character
-    ENHANCED_SYSTEMS_AVAILABLE = True
-except ImportError:
-    # Graceful fallback if enhanced systems aren't available yet
-    ENHANCED_SYSTEMS_AVAILABLE = False
-    print("Enhanced systems not available - using basic character creation")
-
-# Enhanced Character Creation States
-class EnhancedCharCreationState(Enum):
-    """Enhanced character creation states including birth sign calculation."""
-    NAME_INPUT = 0
-    STAT_ROLLING = 1
-    RACE_SELECTION = 2
-    CLASS_SELECTION = 3
-    ALIGNMENT_SELECTION = 4
-    BIRTH_DATE_INPUT = 5      # NEW: Birth date and age input
-    BIRTH_SIGN_REVIEW = 6     # NEW: Review cosmic destiny
-    GOD_SELECTION = 7
-    SPELL_SELECTION = 8
-    GEAR_SELECTION = 9
-    STATS_REVIEW = 10
-    COMPLETE = 11
-
-# Character creation data with enhanced details
-ENHANCED_RACES = {
-    "Human": {
-        "description": "Versatile and ambitious, humans adapt quickly to any situation.",
-        "traits": "Bonus skill point, extra feat, versatile",
-        "stats": ["+1 to any stat of choice"],
-        "abilities": ["Bonus skill point", "Extra starting feat", "Diplomatic bonus"]
-    },
-    "Elf": {
-        "description": "Graceful and long-lived, with natural magical affinity.",
-        "traits": "Keen senses, magic resistance, night vision",
-        "stats": ["+2 Dexterity"],
-        "abilities": ["Night vision", "Magic resistance", "Keen hearing and sight"]
-    },
-    "Dwarf": {
-        "description": "Sturdy and resilient, masters of stone and metal.",
-        "traits": "Poison resistance, stone cunning, combat training",
-        "stats": ["+2 Constitution"],
-        "abilities": ["Poison resistance", "Stone cunning", "Weapon familiarity"]
-    },
-    "Halfling": {
-        "description": "Small but brave, with remarkable luck and stealth.",
-        "traits": "Lucky, brave, nimble",
-        "stats": ["+2 Dexterity"],
-        "abilities": ["Lucky re-rolls", "Brave (fear resistance)", "Small size benefits"]
-    },
-    "Half-Orc": {
-        "description": "Strong and fierce, caught between two worlds.",
-        "traits": "Relentless endurance, savage attacks",
-        "stats": ["+2 Strength", "+1 Constitution"],
-        "abilities": ["Relentless endurance", "Savage critical hits", "Darkvision"]
-    },
-    "Goblin": {
-        "description": "Small, clever, and mischievous creatures of shadow.",
-        "traits": "Nimble escape, stealth mastery",
-        "stats": ["+2 Dexterity", "-1 Constitution"],
-        "abilities": ["Stealth expertise", "Small size", "Nimble escape"]
-    }
-}
-
-ENHANCED_CLASSES = {
-    "Fighter": {
-        "description": "Master of weapons and armor, born for battle.",
-        "traits": "Combat expertise, weapon mastery, high hit points",
-        "stats": ["High Strength or Dexterity recommended"],
-        "abilities": ["Second Wind", "Weapon specialization", "Combat maneuvers", "Extra gear slots from Constitution"]
-    },
-    "Priest": {
-        "description": "Divine spellcaster serving the gods with healing and holy magic.",
-        "traits": "Divine magic, healing powers, undead turning",
-        "stats": ["High Wisdom for spellcasting"],
-        "abilities": ["Divine spellcasting", "Channel divinity", "Healing touch", "Holy magic resistance"]
-    },
-    "Wizard": {
-        "description": "Arcane spellcaster wielding reality-bending magic through study.",
-        "traits": "Arcane magic, spell research, magical knowledge",
-        "stats": ["High Intelligence for spellcasting"],
-        "abilities": ["Arcane spellcasting", "Spell research", "Magical item creation", "Lore mastery"]
-    },
-    "Thief": {
-        "description": "Stealthy scout skilled in locks, traps, and shadows.",
-        "traits": "Stealth, lockpicking, sneak attacks",
-        "stats": ["High Dexterity for skills"],
-        "abilities": ["Sneak attack", "Lockpicking", "Trap detection", "Stealth mastery"]
-    }
-}
-
-ENHANCED_ALIGNMENTS = {
-    "Lawful": {
-        "description": "Believes in order, tradition, and following established rules.",
-        "traits": "Honorable, reliable, structured thinking",
-        "divine_favor": "Fav

@@ -10,6 +10,13 @@ import json
 import time
 from pathlib import Path
 from typing import Optional
+from ui.modern_components import ModernNotificationManager, ModernUITheme
+from ui.modern_integration import (
+    ModernizedCharacterCreation, 
+    ModernizedInventoryUI,
+    ModernizedGearSelection,
+    upgrade_ui_system
+)
 
 # Add the project root to the Python path so we can import our modules
 project_root = Path(__file__).parent
