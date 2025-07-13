@@ -10,6 +10,7 @@ from enum import Enum
 import random
 
 from data.calendar import get_world_calendar, MoonPhase
+from data.states import GameState, CharCreationState
 
 class SpellTier(Enum):
     """Spell power tiers."""

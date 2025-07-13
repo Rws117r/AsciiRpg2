@@ -11,7 +11,7 @@ from typing import List, Tuple, Optional, Dict
 from config.constants import *
 from data.player import Player, get_stat_modifier
 from data.items import *
-from game.states import GearSelectionState
+from data.states import GearSelectionState
 from ui.base_ui import wrap_text
 
 class GearSelector:

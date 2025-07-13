@@ -5,7 +5,7 @@ All colors, sizes, and game settings are defined here.
 
 # --- File Paths ---
 JSON_FILE = 'dungeon.json'
-FONT_FILE = 'NotoSansSymbols2-Regular.ttf'
+FONT_FILE = 'DejaVuSansMono.ttf' # Make sure this path is correct
 
 # --- Display Settings ---
 BASE_FONT_SIZE = 16
@@ -97,3 +97,18 @@ RACES = ["Dwarf", "Elf", "Goblin", "Halfling", "Half-Orc", "Human"]
 CLASSES = ["Fighter", "Priest", "Thief", "Wizard"]
 ALIGNMENTS = ["Lawful", "Chaotic", "Neutral"]
 STATS = ["Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma"]
+
+
+# ==================================================
+# --- NEW: Modern UI Configuration ---
+# ==================================================
+MODERN_UI_ENABLED = True
+USE_MODERN_CHARACTER_CREATION = True
+USE_MODERN_INVENTORY = True
+USE_MODERN_GEAR_SELECTION = True
+
+# --- Optional: Modern UI Theme Overrides ---
+# You can uncomment and change these to customize the look and feel
+# MODERN_UI_ACCENT_COLOR = (255, 215, 0) # Gold
+# MODERN_UI_SUCCESS_COLOR = (76, 175, 80) # Green
+# MODERN_UI_ERROR_COLOR = (244, 67, 54) # Red

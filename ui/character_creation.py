@@ -12,7 +12,7 @@ from enum import Enum
 # Import from modular structure
 from config.constants import *
 from data.player import Player, get_stat_modifier, create_enhanced_player
-from game.states import CharCreationState
+from data.states import CharCreationState
 from ui.base_ui import Button, TextInput, wrap_text
 
 # New systems integration

@@ -19,15 +19,16 @@ class GameState(Enum):
 class CharCreationState(Enum):
     """Character creation substates."""
     NAME_INPUT = 0
-    STAT_ROLLING = 1
-    RACE_SELECTION = 2
-    CLASS_SELECTION = 3
-    ALIGNMENT_SELECTION = 4
-    GOD_SELECTION = 5
-    SPELL_SELECTION = 6
-    GEAR_SELECTION = 7
-    STATS_REVIEW = 8
-    COMPLETE = 9
+    BIRTH_DETAILS = 1 # NEW state for birth date and age
+    STAT_ROLLING = 2
+    RACE_SELECTION = 3
+    CLASS_SELECTION = 4
+    ALIGNMENT_SELECTION = 5
+    GOD_SELECTION = 6
+    SPELL_SELECTION = 7
+    GEAR_SELECTION = 8
+    STATS_REVIEW = 9
+    COMPLETE = 10
 
 class GearSelectionState(Enum):
     """Gear selection substates."""

@@ -1,695 +1,452 @@
 """
-UI Modernization Integration Guide
-Shows how to integrate the new modern UI components with your existing systems.
-This file demonstrates upgrading your current UI screens to use the modern components.
+Modern UI Integration Layer
+This file connects the modern UI components to the game's data and logic.
+It provides modernized versions of UI screens like character creation and inventory.
 """
 
 import pygame
-from typing import Dict, List, Optional, Tuple
+import random
+from typing import Dict, List, Optional, Any, Callable
 
-# Import your existing systems
-from ui.character_creation import EnhancedCharacterCreator
-from ui.inventory_ui import InventoryUI, ContainerViewUI, EquipmentUI
-from ui.gear_selection import GearSelector
-from game.states import GameState, CharCreationState
-
-# Import the new modern components
-from modern_ui_components import (
-    ModernUITheme, ResponsiveLayout, ModernCard, InfoCard, SmartTooltip,
-    AdaptiveList, ModernInventoryGrid, ModernProgressBar, ModernButton,
-    ModernNotificationManager, ModernSpellBrowser, create_modern_fonts
+# Import new modern components and existing systems
+from .modern_components import (
+    ModernUITheme,
+    ResponsiveLayout,
+    ModernNotificationManager,
+    InfoCard,
+    ModernButton,
+    TextInput,
+    StatDisplay,
+    AdaptiveList,
+    ModernInventoryGrid,
+    SmartTooltip
 )
+from data.player import Player, create_enhanced_player, get_stat_modifier
+from data.items import find_item_by_name, InventoryItem
+from data.updated_spell_systems import WizardSpellbook, PriestSpellbook, SpellTier
+from data.birth_sign_system import BirthSignCalculator, format_birth_sign_for_display
+from config.constants import *
+from data.states import GameState, CharCreationState
+from data.calendar import WorldCalendar
 
-class ModernizedCharacterCreation(EnhancedCharacterCreator):
-    """Modernized version of your character creation using new UI components."""
+# --- Constants ---
+GOD_LIST = ["Serentha (Life)", "Caedros (Justice)", "Zyrix (War)", "Velmari (Hearth)", "Nymbril (Nature)", "Vhalor (Death)", "Olvenar (Secrets)"]
+MONTH_LIST = list(WorldCalendar.MONTHS.keys())
+
+class ModernizedCharacterCreation:
+    """
+    Manages the entire character creation process using modern UI components.
+    This class is driven by an external game loop.
+    """
     
     def __init__(self, screen: pygame.Surface, font_file: str):
-        # Initialize the base class
-        super().__init__(screen, font_file)
+        self.screen = screen
+        self.screen_width = screen.get_width()
+        self.screen_height = screen.get_height()
+        self.font_file = font_file
         
-        # Add modern UI components
         self.layout = ResponsiveLayout(self.screen_width, self.screen_height)
-        self.modern_fonts = create_modern_fonts(font_file, self.layout)
+        self.fonts = self.layout.get_fonts(font_file)
+        
+        self.state = CharCreationState.NAME_INPUT
+        
         self.notification_manager = ModernNotificationManager(self.screen_width)
+        self.active_components = []
+        self.buttons = {}
+        self.details_card = None 
+        self._setup_summary_panel()
         
-        # Modern UI elements
-        self.info_cards = {}
-        self.progress_bars = {}
-        self.modern_buttons = []
+        self.player_data = {
+            "name": "", "stats": [10, 10, 10, 10, 10, 10], "race": "Human",
+            "class": "Fighter", "alignment": "Neutral", "god": None,
+            "birth_month": "Duskwane", "birth_day": "17", "age": "33",
+            "spells": [], "gold": 0, "inventory": []
+        }
         
-        self._setup_modern_components()
-    
-    def _setup_modern_components(self):
-        """Setup modern UI components for character creation."""
-        # Progress indicator for character creation steps
-        progress_rect = pygame.Rect(
-            (self.screen_width - 400) // 2, 20, 400, 6
+        self.wizard_spellbook = WizardSpellbook()
+        self.priest_spellbook = PriestSpellbook()
+        
+        self._setup_current_step()
+
+    def _setup_summary_panel(self):
+        summary_width = self.layout.column_width * 0.8
+        summary_rect = pygame.Rect(
+            self.screen_width - summary_width - self.layout.margin,
+            self.layout.margin, summary_width, self.screen_height - (self.layout.margin * 2)
         )
-        self.creation_progress = ModernProgressBar(
-            progress_rect, max_value=10, 
-            color=ModernUITheme.INTERACTIVE_ACTIVE
+        self.summary_card = InfoCard(
+            summary_rect.x, summary_rect.y, summary_rect.width,
+            "Character Summary", "", self.fonts, expandable=False
         )
-        
-        # Race selection card
-        race_card_width = self.layout.column_width
-        self.info_cards['race'] = InfoCard(
-            self.layout.margin, 120, race_card_width,
-            "Choose Your Ancestry", "Select your character's race and heritage",
-            self.modern_fonts, expandable=False
+
+    def _update_summary_panel(self):
+        spells_str = ", ".join(self.player_data['spells']) if self.player_data['spells'] else "None"
+        summary_text = (
+            f"Name: {self.player_data.get('name', '...')}\n"
+            f"Race: {self.player_data.get('race', '...')}\n"
+            f"Class: {self.player_data.get('class', '...')}\n"
+            f"Alignment: {self.player_data.get('alignment', '...')}\n"
+            f"Deity: {self.player_data.get('god', 'None')}\n\n"
+            f"--- Stats ---\n"
+            f"STR: {self.player_data['stats'][0]} | DEX: {self.player_data['stats'][1]}\n"
+            f"CON: {self.player_data['stats'][2]} | INT: {self.player_data['stats'][3]}\n"
+            f"WIS: {self.player_data['stats'][4]} | CHA: {self.player_data['stats'][5]}\n\n"
+            f"--- Spells ---\n{spells_str}"
         )
+        self.summary_card.description = summary_text
+        self.summary_card._render_text()
+
+    def _setup_current_step(self):
+        self.active_components = []
+        self.buttons = {}
+        self.details_card = None
         
-        # Class selection card  
-        class_card_x = self.layout.margin + race_card_width + self.layout.gutter
-        self.info_cards['class'] = InfoCard(
-            class_card_x, 120, race_card_width,
-            "Choose Your Path", "Select your character's class and profession",
-            self.modern_fonts, expandable=False
-        )
-        
-        # Spell selection with modern browser
-        if self.layout.columns >= 2:
-            spell_rect = pygame.Rect(
-                class_card_x, 400, race_card_width, 300
+        content_width = self.layout.column_width * 1.5
+        content_x = self.layout.margin
+
+        if self.state != CharCreationState.NAME_INPUT:
+            back_button = ModernButton(
+                pygame.Rect(content_x, self.screen_height - 60, 120, 40),
+                "Back", self.fonts['body'], variant='secondary', callback=self._go_to_previous_step
             )
-            self.spell_browser = ModernSpellBrowser(spell_rect, [], self.modern_fonts)
-    
-    def draw(self, surface: pygame.Surface):
-        """Enhanced draw method with modern UI."""
-        # Modern background
-        surface.fill(ModernUITheme.SURFACE_PRIMARY)
+            self.buttons['back'] = back_button
+
+        next_text = "Next"
+        if self.state == CharCreationState.STATS_REVIEW:
+            next_text = "Finish"
         
-        # Update progress based on current state
-        progress_value = {
-            CharCreationState.NAME_INPUT: 1,
-            CharCreationState.STAT_ROLLING: 2,
-            CharCreationState.RACE_SELECTION: 3,
-            CharCreationState.CLASS_SELECTION: 4,
-            CharCreationState.ALIGNMENT_SELECTION: 5,
-            CharCreationState.BIRTH_DATE_INPUT: 6,
-            CharCreationState.BIRTH_SIGN_REVIEW: 7,
-            CharCreationState.GOD_SELECTION: 8,
-            CharCreationState.SPELL_SELECTION: 9,
-            CharCreationState.STATS_REVIEW: 10
-        }.get(self.state, 0)
+        next_button = ModernButton(
+            pygame.Rect(content_x + content_width - 120, self.screen_height - 60, 120, 40),
+            next_text, self.fonts['body'], variant='primary', callback=self._go_to_next_step
+        )
+        self.buttons['next'] = next_button
+
+        if self.state == CharCreationState.NAME_INPUT: self._setup_name_input(content_x, content_width)
+        elif self.state == CharCreationState.BIRTH_DETAILS: self._setup_birth_details(content_x, content_width)
+        elif self.state == CharCreationState.STAT_ROLLING: self._setup_stat_rolling(content_x, content_width)
+        elif self.state == CharCreationState.RACE_SELECTION: self._setup_selection_list(RACES, 'race', content_x, content_width)
+        elif self.state == CharCreationState.CLASS_SELECTION: self._setup_selection_list(CLASSES, 'class', content_x, content_width)
+        elif self.state == CharCreationState.ALIGNMENT_SELECTION: self._setup_selection_list(ALIGNMENTS, 'alignment', content_x, content_width)
+        elif self.state == CharCreationState.GOD_SELECTION: self._setup_selection_list(GOD_LIST, 'god', content_x, content_width)
+        elif self.state == CharCreationState.SPELL_SELECTION: self._setup_spell_selection(content_x, content_width)
+        elif self.state == CharCreationState.GEAR_SELECTION: self._setup_gear_selection(content_x, content_width)
+        elif self.state == CharCreationState.STATS_REVIEW: self._setup_review_display(content_x, content_width)
         
-        self.creation_progress.set_value(progress_value)
-        self.creation_progress.update(1/60)  # Assuming 60 FPS
-        self.creation_progress.draw(surface, show_text=False)
+        self._update_summary_panel()
+
+    def _setup_name_input(self, content_x, content_width):
+        self.notification_manager.add_notification("Enter your character's name.", 'info')
+        input_rect = pygame.Rect(content_x, 200, content_width, 50)
+        self.name_input = TextInput(input_rect, self.fonts, placeholder="Character Name")
+        self.active_components.append(self.name_input)
+
+    def _setup_birth_details(self, content_x, content_width):
+        self.notification_manager.add_notification("Describe your character's origin.", 'info')
         
-        # Modern title
-        title = self._get_title()
-        title_surf = self.modern_fonts['title'].render(title, True, ModernUITheme.TEXT_ACCENT)
-        title_rect = title_surf.get_rect(centerx=self.screen_width // 2, top=50)
-        surface.blit(title_surf, title_rect)
+        # Starting y-coordinate
+        y_pos = 150
         
-        # State-specific modern rendering
-        if self.state == CharCreationState.RACE_SELECTION:
-            self._draw_modern_race_selection(surface)
-        elif self.state == CharCreationState.CLASS_SELECTION:
-            self._draw_modern_class_selection(surface)
-        elif self.state == CharCreationState.SPELL_SELECTION:
-            self._draw_modern_spell_selection(surface)
-        elif self.state == CharCreationState.BIRTH_SIGN_REVIEW:
-            self._draw_modern_birth_sign(surface)
-        else:
-            # Fall back to original drawing for other states
-            super().draw(surface)
+        # --- Birth Month List ---
+        month_label = self.fonts['body'].render("Birth Month", True, ModernUITheme.TEXT_SECONDARY)
+        self.active_components.append(('label', month_label, (content_x, y_pos)))
+        y_pos += month_label.get_height() + 5
+        
+        month_list_rect = pygame.Rect(content_x, y_pos, content_width, 250)
+        self.month_list = AdaptiveList(month_list_rect, MONTH_LIST, self.fonts)
+        def on_month_select(selected): self.player_data['birth_month'] = selected[0] if selected else None
+        self.month_list.on_selection_changed = on_month_select
+        self.month_list.select_item(MONTH_LIST.index(self.player_data['birth_month']))
+        self.active_components.append(self.month_list)
+        
+        # --- Day & Age Inputs (Robust Approach) ---
+        # Position the next elements relative to the bottom of the month list.
+        
+        # 1. Calculate the Y position for the row with the labels.
+        label_row_y = self.month_list.rect.bottom + 25
+
+        day_label = self.fonts['body'].render("Birth Day", True, ModernUITheme.TEXT_SECONDARY)
+        age_label = self.fonts['body'].render("Age", True, ModernUITheme.TEXT_SECONDARY)
+        input_width = (content_width // 2) - 10
+        
+        # 2. Place the labels at the newly calculated Y position.
+        self.active_components.append(('label', day_label, (content_x, label_row_y)))
+        self.active_components.append(('label', age_label, (content_x + input_width + 20, label_row_y)))
+        
+        # 3. Calculate the Y position for the input boxes, placing them below the labels.
+        input_row_y = label_row_y + day_label.get_height() + 5
+
+        # 4. Create and place the input boxes.
+        day_input_rect = pygame.Rect(content_x, input_row_y, input_width, 50)
+        self.day_input = TextInput(day_input_rect, self.fonts, placeholder="e.g., 17", initial_text=self.player_data['birth_day'])
+        self.active_components.append(self.day_input)
+
+        age_input_rect = pygame.Rect(content_x + input_width + 20, input_row_y, input_width, 50)
+        self.age_input = TextInput(age_input_rect, self.fonts, placeholder="e.g., 33", initial_text=self.player_data['age'])
+        self.active_components.append(self.age_input)
+
+    def _setup_stat_rolling(self, content_x, content_width):
+        self.notification_manager.add_notification("Roll for your stats.", 'info')
+        roll_button = ModernButton(pygame.Rect(content_x, 150, 150, 40), "Roll Stats", self.fonts['body'], callback=self._roll_stats)
+        self.buttons['roll'] = roll_button
+        self.stat_displays = []
+        y_pos = 220
+        for i, stat_name in enumerate(STATS):
+            stat_rect = pygame.Rect(content_x, y_pos, content_width, 40)
+            stat_display = StatDisplay(stat_rect, stat_name, self.player_data['stats'][i], self.fonts)
+            self.stat_displays.append(stat_display)
+            self.active_components.append(stat_display)
+            y_pos += 50
+
+    def _roll_stats(self):
+        self.player_data['stats'] = [random.randint(8, 18) for _ in range(6)]
+        for i, display in enumerate(self.stat_displays): display.value = self.player_data['stats'][i]
+        self.notification_manager.add_notification("Stats rolled!", 'success', duration=2.0)
+        self._update_summary_panel()
+
+    def _setup_selection_list(self, items: List[str], data_key: str, content_x, content_width):
+        list_rect = pygame.Rect(content_x, 150, content_width / 2 - 10, self.screen_height - 250)
+        selection_list = AdaptiveList(list_rect, items, self.fonts, multi_select=False)
+        
+        details_rect = pygame.Rect(content_x + list_rect.width + 20, 150, content_width - list_rect.width - 20, self.screen_height - 250)
+        self.details_card = InfoCard(details_rect.x, details_rect.y, details_rect.width, "Details", "Select an item to see details.", self.fonts, expandable=False)
+        
+        def on_select(selected_items):
+            if not selected_items: return
+            selection = selected_items[0]
+            self.player_data[data_key] = selection
+            self.details_card.title = selection
+            self.details_card.description = f"Details about {selection} would appear here."
+            self.details_card._render_text()
+            self._update_summary_panel()
+
+        selection_list.on_selection_changed = on_select
+        self.active_components.append(selection_list)
+        self.active_components.append(self.details_card)
+        selection_list.select_item(0)
+
+    def _setup_spell_selection(self, content_x, content_width):
+        player_class = self.player_data.get('class')
+        spellbook = self.wizard_spellbook if player_class == "Wizard" else self.priest_spellbook
+        
+        if not spellbook: 
+            self._setup_placeholder_step("Spell Selection", "This class does not select spells at creation.", content_x, content_width)
+            return
+
+        tier1_spells = [spell for spell in spellbook.get_spells_by_tier(SpellTier.TIER_1)]
+        spell_names = [spell.name for spell in tier1_spells]
+        
+        list_rect = pygame.Rect(content_x, 150, content_width / 2 - 10, self.screen_height - 250)
+        spell_list = AdaptiveList(list_rect, spell_names, self.fonts, multi_select=True, max_selection=3)
+        
+        details_rect = pygame.Rect(content_x + list_rect.width + 20, 150, content_width - list_rect.width - 20, self.screen_height - 250)
+        self.details_card = InfoCard(details_rect.x, details_rect.y, details_rect.width, "Spell Details", "Select a spell to see details.", self.fonts, expandable=False)
+
+        def on_select(selected_names):
+            self.player_data['spells'] = selected_names
+            if selected_names:
+                last_selected_spell = spellbook.get_spell(selected_names[-1])
+                if last_selected_spell:
+                    self.details_card.title = last_selected_spell.name
+                    desc = (f"Tier {last_selected_spell.tier.value} {player_class} Spell\n"
+                            f"Range: {last_selected_spell.range.value}\n\n"
+                            f"{last_selected_spell.description}\n\n"
+                            f"LORE-FUELED:\n{last_selected_spell.lore_condition_text}")
+                    self.details_card.description = desc
+                    self.details_card._render_text()
+            self._update_summary_panel()
+
+        spell_list.on_selection_changed = on_select
+        self.active_components.append(spell_list)
+        self.active_components.append(self.details_card)
+        self.notification_manager.add_notification("Select up to 3 starting spells.", 'info')
+
+    def _setup_gear_selection(self, content_x, content_width):
+        player_class = self.player_data['class']
+        gold = STARTING_GOLD.get(player_class, 0)
+        text = (f"As a {player_class}, you begin your journey with:\n\n"
+                f"- {gold} gold pieces\n"
+                f"- A 'Crawling Kit' with essential supplies.\n\n"
+                "An interactive shop is planned for a future update.")
+        card = InfoCard(content_x, 150, content_width, "Starting Gear", text, self.fonts, expandable=False)
+        self.active_components.append(card)
+
+    def _get_day_of_year(self, month_name, day):
+        day_of_year = 0
+        for m, d in WorldCalendar.MONTHS.items():
+            if m == month_name:
+                day_of_year += day
+                break
+            day_of_year += d
+        return day_of_year
+
+    def _setup_review_display(self, content_x, content_width):
+        player = self.create_player(finalize=False)
+        if not player: 
+            self._setup_placeholder_step("Error", "Could not generate character preview.", content_x, content_width)
             return
         
-        # Modern notifications
-        self.notification_manager.update(1/60)
-        self.notification_manager.draw(surface)
-        
-        # Modern instructions
-        self._draw_modern_instructions(surface)
-    
-    def _draw_modern_race_selection(self, surface: pygame.Surface):
-        """Modern race selection interface."""
-        # Race list with modern styling
-        races = list(self._get_current_options())
-        
-        # Left panel - race list
-        list_rect = pygame.Rect(
-            self.layout.margin, 150, 
-            self.layout.column_width, 400
-        )
-        
-        race_list = AdaptiveList(list_rect, races, self.modern_fonts)
-        race_list.selected_index = self.selected_index
-        race_list.draw(surface)
-        
-        # Right panel - race details card
-        if self.selected_index < len(races):
-            selected_race = races[self.selected_index]
-            race_details = self._get_current_details()
-            
-            details_rect = pygame.Rect(
-                self.layout.margin + self.layout.column_width + self.layout.gutter,
-                150, self.layout.column_width, 400
-            )
-            
-            details_card = ModernCard(
-                details_rect.x, details_rect.y, 
-                details_rect.width, details_rect.height,
-                elevated=True
-            )
-            details_card.draw_background(surface)
-            
-            # Race details content
-            self._draw_race_details_content(surface, details_card.content_rect, race_details)
-    
-    def _draw_race_details_content(self, surface: pygame.Surface, rect: pygame.Rect, details: dict):
-        """Draw race details with modern styling."""
-        current_y = rect.y + ModernUITheme.SPACING_MD
-        
-        # Race name with accent color
-        race_name = details.get('description', 'Unknown Race').split('.')[0]
-        name_surf = self.modern_fonts['heading'].render(race_name, True, ModernUITheme.TEXT_ACCENT)
-        surface.blit(name_surf, (rect.x + ModernUITheme.SPACING_MD, current_y))
-        current_y += name_surf.get_height() + ModernUITheme.SPACING_SM
-        
-        # Description
-        description = details.get('description', '')
-        desc_lines = wrap_text(description, rect.width - ModernUITheme.SPACING_LG, self.modern_fonts['body'])
-        for line in desc_lines:
-            line_surf = self.modern_fonts['body'].render(line, True, ModernUITheme.TEXT_PRIMARY)
-            surface.blit(line_surf, (rect.x + ModernUITheme.SPACING_MD, current_y))
-            current_y += line_surf.get_height() + 3
-        
-        current_y += ModernUITheme.SPACING_MD
-        
-        # Traits section
-        traits_surf = self.modern_fonts['subheading'].render("Traits", True, ModernUITheme.TEXT_ACCENT)
-        surface.blit(traits_surf, (rect.x + ModernUITheme.SPACING_MD, current_y))
-        current_y += traits_surf.get_height() + ModernUITheme.SPACING_SM
-        
-        traits = details.get('traits', '')
-        trait_surf = self.modern_fonts['small'].render(traits, True, ModernUITheme.TEXT_SECONDARY)
-        surface.blit(trait_surf, (rect.x + ModernUITheme.SPACING_MD, current_y))
-        current_y += trait_surf.get_height() + ModernUITheme.SPACING_MD
-        
-        # Abilities section
-        if 'abilities' in details:
-            abilities_surf = self.modern_fonts['subheading'].render("Abilities", True, ModernUITheme.TEXT_ACCENT)
-            surface.blit(abilities_surf, (rect.x + ModernUITheme.SPACING_MD, current_y))
-            current_y += abilities_surf.get_height() + ModernUITheme.SPACING_SM
-            
-            for ability in details['abilities']:
-                ability_surf = self.modern_fonts['small'].render(f"• {ability}", True, ModernUITheme.TEXT_PRIMARY)
-                surface.blit(ability_surf, (rect.x + ModernUITheme.SPACING_MD, current_y))
-                current_y += ability_surf.get_height() + 2
-    
-    def _draw_modern_class_selection(self, surface: pygame.Surface):
-        """Modern class selection interface."""
-        classes = list(self._get_current_options())
-        
-        # Similar layout to race selection but with class-specific styling
-        list_rect = pygame.Rect(
-            self.layout.margin, 150, 
-            self.layout.column_width, 400
-        )
-        
-        class_list = AdaptiveList(list_rect, classes, self.modern_fonts)
-        class_list.selected_index = self.selected_index
-        class_list.draw(surface)
-        
-        # Class details with different accent color
-        if self.selected_index < len(classes):
-            details_rect = pygame.Rect(
-                self.layout.margin + self.layout.column_width + self.layout.gutter,
-                150, self.layout.column_width, 400
-            )
-            
-            details_card = ModernCard(
-                details_rect.x, details_rect.y, 
-                details_rect.width, details_rect.height,
-                elevated=True
-            )
-            details_card.draw_background(surface)
-            
-            class_details = self._get_current_details()
-            self._draw_class_details_content(surface, details_card.content_rect, class_details)
-    
-    def _draw_class_details_content(self, surface: pygame.Surface, rect: pygame.Rect, details: dict):
-        """Draw class details with modern styling."""
-        current_y = rect.y + ModernUITheme.SPACING_MD
-        
-        # Class name
-        class_name = details.get('description', 'Unknown Class').split('.')[0]
-        name_surf = self.modern_fonts['heading'].render(class_name, True, ModernUITheme.INFO)
-        surface.blit(name_surf, (rect.x + ModernUITheme.SPACING_MD, current_y))
-        current_y += name_surf.get_height() + ModernUITheme.SPACING_SM
-        
-        # Description and abilities (similar to race but with different colors)
-        description = details.get('description', '')
-        desc_lines = wrap_text(description, rect.width - ModernUITheme.SPACING_LG, self.modern_fonts['body'])
-        for line in desc_lines:
-            line_surf = self.modern_fonts['body'].render(line, True, ModernUITheme.TEXT_PRIMARY)
-            surface.blit(line_surf, (rect.x + ModernUITheme.SPACING_MD, current_y))
-            current_y += line_surf.get_height() + 3
-        
-        # Add class-specific visual indicators
-        if 'Wizard' in class_name or 'Priest' in class_name:
-            magic_indicator = self.modern_fonts['small'].render("🔮 Spellcaster", True, ModernUITheme.TEXT_ACCENT)
-            surface.blit(magic_indicator, (rect.x + ModernUITheme.SPACING_MD, current_y + ModernUITheme.SPACING_SM))
-    
-    def _draw_modern_spell_selection(self, surface: pygame.Surface):
-        """Modern spell selection interface."""
-        if hasattr(self, 'spell_browser'):
-            self.spell_browser.draw(surface)
-            
-            # Selected spells indicator
-            progress_text = f"Selected: {len(self.selected_spells)}/{self.spells_to_select}"
-            progress_surf = self.modern_fonts['subheading'].render(progress_text, True, ModernUITheme.TEXT_ACCENT)
-            surface.blit(progress_surf, (self.layout.margin, 100))
-            
-            # Modern spell selection progress bar
-            if self.spells_to_select > 0:
-                spell_progress_rect = pygame.Rect(
-                    self.layout.margin, 125, 300, 8
-                )
-                spell_progress = ModernProgressBar(
-                    spell_progress_rect, 
-                    max_value=self.spells_to_select,
-                    current_value=len(self.selected_spells),
-                    color=ModernUITheme.SUCCESS
-                )
-                spell_progress.draw(surface)
-    
-    def _draw_modern_birth_sign(self, surface: pygame.Surface):
-        """Modern birth sign review interface."""
-        # Cosmic background effect
-        center_x = self.screen_width // 2
-        center_y = self.screen_height // 2
-        
-        # Create a mystical card for birth sign
-        sign_card = ModernCard(
-            center_x - 300, center_y - 200,
-            600, 400, elevated=True
-        )
-        sign_card.draw_background(surface)
-        
-        # Cosmic title
-        title_surf = self.modern_fonts['title'].render("Your Cosmic Destiny", True, ModernUITheme.TEXT_ACCENT)
-        title_rect = title_surf.get_rect(centerx=center_x, top=sign_card.rect.y + ModernUITheme.SPACING_LG)
-        surface.blit(title_surf, title_rect)
-        
-        # Birth sign content with mystical styling
-        if hasattr(self, 'birth_sign') and self.birth_sign:
-            content_y = title_rect.bottom + ModernUITheme.SPACING_LG
-            
-            # Birth sign title with special formatting
-            sign_title = f"✨ {self.birth_sign.combined_title} ✨"
-            sign_surf = self.modern_fonts['heading'].render(sign_title, True, ModernUITheme.WARNING)
-            sign_rect = sign_surf.get_rect(centerx=center_x, top=content_y)
-            surface.blit(sign_surf, sign_rect)
-            
-            # Prophecy text with mystical styling
-            prophecy_y = sign_rect.bottom + ModernUITheme.SPACING_MD
-            prophecy_lines = wrap_text(self.birth_sign.prophecy_text, 500, self.modern_fonts['body'])
-            
-            for line in prophecy_lines:
-                line_surf = self.modern_fonts['body'].render(line, True, ModernUITheme.TEXT_PRIMARY)
-                line_rect = line_surf.get_rect(centerx=center_x, top=prophecy_y)
-                surface.blit(line_surf, line_rect)
-                prophecy_y += line_surf.get_height() + 3
-    
-    def _draw_modern_instructions(self, surface: pygame.Surface):
-        """Modern instruction display."""
-        instructions = self._get_instructions_for_state()
-        
-        if instructions:
-            # Create semi-transparent instruction panel
-            panel_height = len(instructions) * 25 + ModernUITheme.SPACING_MD
-            panel_rect = pygame.Rect(
-                ModernUITheme.SPACING_MD, 
-                self.screen_height - panel_height - ModernUITheme.SPACING_MD,
-                400, panel_height
-            )
-            
-            # Semi-transparent background
-            panel_surface = pygame.Surface((panel_rect.width, panel_rect.height), pygame.SRCALPHA)
-            panel_surface.fill((*ModernUITheme.SURFACE_ELEVATED, 200))
-            surface.blit(panel_surface, panel_rect)
-            
-            # Instructions
-            inst_y = panel_rect.y + ModernUITheme.SPACING_SM
-            for instruction in instructions:
-                inst_surf = self.modern_fonts['small'].render(instruction, True, ModernUITheme.TEXT_PRIMARY)
-                surface.blit(inst_surf, (panel_rect.x + ModernUITheme.SPACING_SM, inst_y))
-                inst_y += 20
-    
-    def _get_instructions_for_state(self) -> List[str]:
-        """Get instructions for current state."""
-        instruction_map = {
-            CharCreationState.RACE_SELECTION: ["↑↓ Navigate races", "ENTER Select", "ESC Back"],
-            CharCreationState.CLASS_SELECTION: ["↑↓ Navigate classes", "ENTER Select", "ESC Back"],
-            CharCreationState.SPELL_SELECTION: ["↑↓ Navigate spells", "ENTER Select/Deselect", "ESC Back"],
-            CharCreationState.BIRTH_SIGN_REVIEW: ["ENTER Continue", "ESC Recalculate"],
-        }
-        return instruction_map.get(self.state, [])
-    
-    def handle_event(self, event: pygame.event.Event) -> Optional[bool]:
-        """Enhanced event handling with modern UI feedback."""
-        # Handle modern UI events first
-        for card in self.info_cards.values():
-            if card.handle_event(event):
-                return False
-        
-        # Handle spell browser if active
-        if hasattr(self, 'spell_browser') and self.state == CharCreationState.SPELL_SELECTION:
-            if self.spell_browser.handle_event(event):
-                return False
-        
-        # Add notifications for state transitions
-        old_state = self.state
-        result = super().handle_event(event)
-        
-        if old_state != self.state:
-            self._add_transition_notification(old_state, self.state)
-        
-        return result
-    
-    def _add_transition_notification(self, old_state, new_state):
-        """Add notifications for smooth state transitions."""
-        state_names = {
-            CharCreationState.NAME_INPUT: "Name Input",
-            CharCreationState.RACE_SELECTION: "Race Selection", 
-            CharCreationState.CLASS_SELECTION: "Class Selection",
-            CharCreationState.SPELL_SELECTION: "Spell Selection",
-            CharCreationState.BIRTH_SIGN_REVIEW: "Birth Sign Review"
-        }
-        
-        if new_state in state_names:
-            message = f"Entering {state_names[new_state]}"
-            self.notification_manager.add_notification(message, 'info', duration=2.0)
+        try:
+            day_of_year = self._get_day_of_year(player.birth_month, player.birth_day)
+            birth_sign = BirthSignCalculator.calculate_birth_sign(player.birth_year, day_of_year)
+            review_text = "\n".join(format_birth_sign_for_display(birth_sign))
+        except (ValueError, TypeError):
+             review_text = "Invalid birth date provided.\nPlease go back and correct it."
 
-class ModernizedInventoryUI(InventoryUI):
-    """Modernized inventory interface."""
+        review_card = InfoCard(content_x, 150, content_width, f"The Story of {player.name}", review_text, self.fonts)
+        self.active_components.append(review_card)
+
+    def _go_to_next_step(self):
+        current_state_val = self.state.value
+        
+        if self.state == CharCreationState.NAME_INPUT:
+            self.player_data['name'] = self.name_input.text
+            if not self.player_data['name']:
+                self.notification_manager.add_notification("Name cannot be empty.", 'error'); return
+        elif self.state == CharCreationState.BIRTH_DETAILS:
+            self.player_data['birth_day'] = self.day_input.text
+            self.player_data['age'] = self.age_input.text
+            try:
+                int(self.player_data['birth_day']); int(self.player_data['age'])
+            except ValueError:
+                self.notification_manager.add_notification("Day and Age must be numbers.", 'error'); return
+
+        if self.state == CharCreationState.STATS_REVIEW:
+            self.state = CharCreationState.COMPLETE; return
+
+        next_state_val = current_state_val + 1
+        
+        if CharCreationState(next_state_val) == CharCreationState.GOD_SELECTION and self.player_data['class'] != 'Priest': next_state_val += 1
+        if CharCreationState(next_state_val) == CharCreationState.SPELL_SELECTION and self.player_data['class'] not in ['Priest', 'Wizard']: next_state_val += 1
+
+        if next_state_val >= CharCreationState.COMPLETE.value: self.state = CharCreationState.STATS_REVIEW
+        else: self.state = CharCreationState(next_state_val)
+        
+        self._setup_current_step()
+
+    def _go_to_previous_step(self):
+        current_state_val = self.state.value
+        prev_state_val = current_state_val - 1
+
+        if CharCreationState(prev_state_val) == CharCreationState.SPELL_SELECTION and self.player_data['class'] not in ['Priest', 'Wizard']: prev_state_val -= 1
+        if CharCreationState(prev_state_val) == CharCreationState.GOD_SELECTION and self.player_data['class'] != 'Priest': prev_state_val -= 1
+        
+        if prev_state_val >= 0:
+            self.state = CharCreationState(prev_state_val)
+            self._setup_current_step()
+
+    def handle_event(self, event: pygame.event.Event) -> Optional[bool]:
+        if self.state == CharCreationState.COMPLETE: return True
+
+        for component in self.active_components:
+            if isinstance(component, tuple) and component[0] == 'label': continue
+            if hasattr(component, 'handle_event') and component.handle_event(event):
+                self._update_summary_panel(); return
+        
+        for button in self.buttons.values():
+            if button.handle_event(event): return
+        
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN:
+            if self.buttons.get('next'):
+                self.buttons['next'].callback()
+                if self.state == CharCreationState.COMPLETE: return True
+                return
+            
+        return None
+
+    def create_player(self, finalize=True) -> Optional[Player]:
+        try:
+            player = create_enhanced_player(
+                name=self.player_data['name'], race=self.player_data['race'],
+                character_class=self.player_data['class'], alignment=self.player_data['alignment'],
+                stats=self.player_data['stats'], birth_month=self.player_data['birth_month'],
+                birth_day=int(self.player_data['birth_day']), age=int(self.player_data['age'])
+            )
+        except (ValueError, TypeError):
+            if finalize: self.notification_manager.add_notification("Invalid birth date.", 'error')
+            return None
+
+        if finalize:
+            day_of_year = self._get_day_of_year(player.birth_month, player.birth_day)
+            birth_sign = BirthSignCalculator.calculate_birth_sign(player.birth_year, day_of_year)
+            player.apply_birth_sign_bonuses(birth_sign)
+            player.known_spells = self.player_data['spells']
+            player.god = self.player_data['god']
+            player.gold = STARTING_GOLD.get(player.character_class, 0)
+            kit_item = find_item_by_name("Crawling Kit")
+            if kit_item:
+                player.inventory.append(InventoryItem(item=kit_item, quantity=1))
+        return player
+
+    def draw(self, surface: pygame.Surface):
+        surface.fill(ModernUITheme.SURFACE_PRIMARY)
+        
+        title_text = self.state.name.replace("_", " ").title()
+        title_surf = self.fonts['title'].render(title_text, True, ModernUITheme.TEXT_ACCENT)
+        title_rect = title_surf.get_rect(centerx=(self.screen_width - self.summary_card.rect.width) / 2, y=self.layout.margin)
+        surface.blit(title_surf, title_rect)
+
+        for component in self.active_components:
+            if isinstance(component, tuple) and component[0] == 'label':
+                surface.blit(component[1], component[2])
+            else:
+                component.draw(surface)
+        
+        for button in self.buttons.values(): button.draw(surface)
+        
+        self.summary_card.draw(surface)
+        self.notification_manager.draw(surface)
+
+class ModernizedInventoryUI:
+    """Manages the modern inventory screen."""
     
     def __init__(self, screen_width: int, screen_height: int, font_file: str):
-        super().__init__(screen_width, screen_height, font_file)
-        
-        # Add modern components
         self.layout = ResponsiveLayout(screen_width, screen_height)
-        self.modern_fonts = create_modern_fonts(font_file, self.layout)
+        self.fonts = self.layout.get_fonts(font_file)
+        self.notification_manager = ModernNotificationManager(screen_width)
         
-        # Modern inventory grid
-        grid_rect = pygame.Rect(
-            self.layout.margin, 100,
-            self.layout.column_width, 500
-        )
-        self.inventory_grid = ModernInventoryGrid(grid_rect, self.modern_fonts)
+        self.grid_rect = pygame.Rect(self.layout.margin, 100, self.layout.column_width, self.layout.content_height - 150)
+        self.inventory_grid = ModernInventoryGrid(self.grid_rect, self.fonts)
         
-        # Equipment preview card
-        equipment_rect = pygame.Rect(
-            self.layout.margin + self.layout.column_width + self.layout.gutter,
-            100, self.layout.column_width, 300
-        )
-        self.equipment_card = InfoCard(
-            equipment_rect.x, equipment_rect.y, equipment_rect.width,
-            "Equipment", "Currently equipped items and stats",
-            self.modern_fonts, expandable=True
-        )
+        self.details_card = InfoCard(self.layout.margin + self.layout.column_width + self.layout.gutter, 100,
+                                     self.layout.column_width, "Item Details", "Hover over an item to see details.",
+                                     self.fonts, expandable=False)
+        self.tooltip = None
+
+    def update_inventory(self, player: Player):
+        self.inventory_grid.items = {}
+        for inv_item in player.inventory: self.inventory_grid.add_item(inv_item)
+
+    def handle_event(self, event: pygame.event.Event):
+        self.inventory_grid.handle_event(event)
         
-        # Stats preview card
-        stats_rect = pygame.Rect(
-            equipment_rect.x, equipment_rect.bottom + ModernUITheme.SPACING_MD,
-            equipment_rect.width, 200
-        )
-        self.stats_card = InfoCard(
-            stats_rect.x, stats_rect.y, stats_rect.width,
-            "Character Stats", "Current health, mana, and other vital statistics",
-            self.modern_fonts, expandable=True
-        )
-    
-    def draw_inventory_screen(self, surface: pygame.Surface, player):
-        """Enhanced inventory with modern components."""
+        if event.type == pygame.MOUSEMOTION:
+            slot = self.inventory_grid.hovered_slot
+            if slot and slot in self.inventory_grid.items:
+                item = self.inventory_grid.items[slot]
+                content = {'title': f"{item.item.name} (x{item.quantity})",
+                           'subtitle': f"Category: {item.item.category}",
+                           'description': item.item.description}
+                self.tooltip = SmartTooltip(pygame.Rect(event.pos[0] + 15, event.pos[1] + 15, 1, 1), content, self.fonts)
+                self.tooltip.show()
+            else:
+                self.tooltip = None
+
+    def draw_inventory_screen(self, surface: pygame.Surface, player: Player):
         surface.fill(ModernUITheme.SURFACE_PRIMARY)
         
-        # Modern title
-        title_surf = self.modern_fonts['title'].render(f"{player.name}'s Inventory", True, ModernUITheme.TEXT_ACCENT)
-        title_rect = title_surf.get_rect(centerx=self.screen_width // 2, top=20)
-        surface.blit(title_surf, title_rect)
+        title_surf = self.fonts['title'].render("Inventory", True, ModernUITheme.TEXT_ACCENT)
+        surface.blit(title_surf, (self.layout.margin, self.layout.margin))
         
-        # Modern inventory grid
         self.inventory_grid.draw(surface)
+        self.details_card.draw(surface)
         
-        # Equipment and stats cards
-        self.equipment_card.draw(surface)
-        self.stats_card.draw(surface)
-        
-        # Modern progress bars for stats
-        self._draw_modern_stat_bars(surface, player)
-        
-        # Modern instructions
-        self._draw_modern_inventory_instructions(surface)
-    
-    def _draw_modern_stat_bars(self, surface: pygame.Surface, player):
-        """Draw modern health/mana bars."""
-        bar_width = 200
-        bar_height = 8
-        bar_x = self.stats_card.content_rect.x
-        bar_y = self.stats_card.content_rect.y + 50
-        
-        # Health bar
-        hp_bar = ModernProgressBar(
-            pygame.Rect(bar_x, bar_y, bar_width, bar_height),
-            max_value=player.max_hp,
-            current_value=player.hp,
-            color=ModernUITheme.ERROR if player.hp < player.max_hp * 0.3 else ModernUITheme.SUCCESS
-        )
-        hp_bar.draw(surface)
-        
-        # HP label
-        hp_text = f"Health: {player.hp}/{player.max_hp}"
-        hp_surf = self.modern_fonts['small'].render(hp_text, True, ModernUITheme.TEXT_PRIMARY)
-        surface.blit(hp_surf, (bar_x, bar_y - 20))
-        
-        # Experience bar
-        if hasattr(player, 'xp') and hasattr(player, 'xp_to_next_level'):
-            xp_bar_y = bar_y + 40
-            xp_bar = ModernProgressBar(
-                pygame.Rect(bar_x, xp_bar_y, bar_width, bar_height),
-                max_value=player.xp_to_next_level,
-                current_value=player.xp,
-                color=ModernUITheme.INFO
-            )
-            xp_bar.draw(surface)
-            
-            xp_text = f"Experience: {player.xp}/{player.xp_to_next_level}"
-            xp_surf = self.modern_fonts['small'].render(xp_text, True, ModernUITheme.TEXT_PRIMARY)
-            surface.blit(xp_surf, (bar_x, xp_bar_y - 20))
-    
-    def _draw_modern_inventory_instructions(self, surface: pygame.Surface):
-        """Modern instruction panel."""
-        instructions = [
-            "Drag items to rearrange",
-            "Right-click for actions", 
-            "ESC to return to game"
-        ]
-        
-        panel_rect = pygame.Rect(
-            ModernUITheme.SPACING_MD,
-            self.screen_height - 80,
-            300, 60
-        )
-        
-        panel_surface = pygame.Surface((panel_rect.width, panel_rect.height), pygame.SRCALPHA)
-        panel_surface.fill((*ModernUITheme.SURFACE_ELEVATED, 180))
-        surface.blit(panel_surface, panel_rect)
-        
-        inst_y = panel_rect.y + ModernUITheme.SPACING_SM
-        for instruction in instructions:
-            inst_surf = self.modern_fonts['small'].render(instruction, True, ModernUITheme.TEXT_PRIMARY)
-            surface.blit(inst_surf, (panel_rect.x + ModernUITheme.SPACING_SM, inst_y))
-            inst_y += 18
-
-class ModernizedGearSelection(GearSelector):
-    """Modernized gear selection with better UX."""
-    
-    def __init__(self, player, screen: pygame.Surface, font_file: str):
-        super().__init__(player, screen, font_file)
-        
-        # Add modern components
-        self.layout = ResponsiveLayout(self.screen_width, self.screen_height)
-        self.modern_fonts = create_modern_fonts(font_file, self.layout)
-        self.notification_manager = ModernNotificationManager(self.screen_width)
-        
-        # Modern category cards
-        self.category_cards = self._create_category_cards()
-        
-        # Modern shopping cart
-        cart_rect = pygame.Rect(
-            self.screen_width - 300 - ModernUITheme.SPACING_MD,
-            100, 280, 400
-        )
-        self.shopping_cart = InfoCard(
-            cart_rect.x, cart_rect.y, cart_rect.width,
-            "Shopping Cart", "Items ready for purchase",
-            self.modern_fonts, expandable=True
-        )
-    
-    def _create_category_cards(self):
-        """Create modern category selection cards."""
-        categories = self._get_categories()
-        cards = {}
-        
-        cards_per_row = min(3, len(categories))
-        card_width = (self.layout.content_width - (cards_per_row - 1) * self.layout.gutter) // cards_per_row
-        card_height = 120
-        
-        for i, category in enumerate(categories):
-            if category == "Review & Finish":
-                continue
-                
-            row = i // cards_per_row
-            col = i % cards_per_row
-            
-            x = self.layout.margin + col * (card_width + self.layout.gutter)
-            y = 120 + row * (card_height + self.layout.gutter)
-            
-            cards[category] = InfoCard(
-                x, y, card_width, category,
-                self._get_category_description(category),
-                self.modern_fonts, expandable=False
-            )
-        
-        return cards
-    
-    def _get_category_description(self, category: str) -> str:
-        """Get description for category."""
-        descriptions = {
-            "General": "Basic supplies and tools",
-            "Weapons": "Combat equipment", 
-            "Armor": "Protective gear",
-            "Kits": "Complete equipment sets"
-        }
-        return descriptions.get(category, "Equipment category")
-    
-    def draw(self, surface: pygame.Surface):
-        """Enhanced gear selection with modern UI."""
-        surface.fill(ModernUITheme.SURFACE_PRIMARY)
-        
-        # Modern title
-        title_surf = self.modern_fonts['title'].render("Equip Your Adventure", True, ModernUITheme.TEXT_ACCENT)
-        title_rect = title_surf.get_rect(centerx=self.screen_width // 2, top=20)
-        surface.blit(title_surf, title_rect)
-        
-        # Draw category cards
-        if self.state == GearSelectionState.CATEGORY_SELECTION:
-            for category, card in self.category_cards.items():
-                # Highlight selected category
-                if category == self.current_category:
-                    highlight_surface = pygame.Surface((card.rect.width, card.rect.height), pygame.SRCALPHA)
-                    highlight_surface.fill((*ModernUITheme.INTERACTIVE_ACTIVE, 50))
-                    surface.blit(highlight_surface, card.rect)
-                
-                card.draw(surface)
-        
-        # Shopping cart
-        self.shopping_cart.draw(surface)
-        
-        # Player info with modern styling
-        self._draw_modern_player_info(surface)
-        
-        # Modern notifications
-        self.notification_manager.update(1/60)
+        if self.tooltip: self.tooltip.draw(surface)
         self.notification_manager.draw(surface)
-    
-    def _draw_modern_player_info(self, surface: pygame.Surface):
-        """Modern player information panel."""
-        info_rect = pygame.Rect(
-            ModernUITheme.SPACING_MD, 
-            self.screen_height - 120,
-            350, 100
-        )
-        
-        info_card = ModernCard(
-            info_rect.x, info_rect.y,
-            info_rect.width, info_rect.height,
-            elevated=True
-        )
-        info_card.draw_background(surface)
-        
-        content_y = info_card.content_rect.y
-        
-        # Player name
-        name_surf = self.modern_fonts['heading'].render(self.player.name, True, ModernUITheme.TEXT_ACCENT)
-        surface.blit(name_surf, (info_card.content_rect.x, content_y))
-        content_y += name_surf.get_height() + 5
-        
-        # Class
-        class_surf = self.modern_fonts['body'].render(f"{self.player.character_class}", True, ModernUITheme.TEXT_PRIMARY)
-        surface.blit(class_surf, (info_card.content_rect.x, content_y))
-        content_y += class_surf.get_height() + 10
-        
-        # Gold with progress bar showing spending
-        gold_text = f"Gold: {self.gold:.1f} gp"
-        gold_surf = self.modern_fonts['body'].render(gold_text, True, ModernUITheme.WARNING)
-        surface.blit(gold_surf, (info_card.content_rect.x, content_y))
-        
-        # Gear capacity bar
-        capacity_y = content_y + 25
-        capacity_bar = ModernProgressBar(
-            pygame.Rect(info_card.content_rect.x, capacity_y, 200, 6),
-            max_value=self.max_gear_slots,
-            current_value=self.used_gear_slots,
-            color=ModernUITheme.WARNING if self.used_gear_slots > self.max_gear_slots * 0.8 else ModernUITheme.SUCCESS
-        )
-        capacity_bar.draw(surface)
 
-# Integration function to upgrade existing UI systems
-def upgrade_ui_system(main_app):
-    """Upgrade the main application to use modern UI components."""
-    
-    # Replace character creation
+def upgrade_ui_system(game_instance) -> Dict[str, Callable]:
+    """Returns a dictionary of creator functions for modern UI screens."""
     def create_modern_character_creation():
-        return ModernizedCharacterCreation(main_app.screen, main_app.font_file)
-    
-    # Replace inventory UI
+        return ModernizedCharacterCreation(game_instance.screen, game_instance.font_file)
     def create_modern_inventory():
-        return ModernizedInventoryUI(main_app.screen_width, main_app.screen_height, main_app.font_file)
-    
-    # Replace gear selection
-    def create_modern_gear_selection(player):
-        return ModernizedGearSelection(player, main_app.screen, main_app.font_file)
-    
-    # Add notification system to main app
-    main_app.notification_manager = ModernNotificationManager(main_app.screen_width)
-    
-    # Return the new creators
-    return {
-        'character_creation': create_modern_character_creation,
-        'inventory_ui': create_modern_inventory,
-        'gear_selection': create_modern_gear_selection
-    }
-
-# Usage example for integrating with your main.py
-"""
-To integrate these modern UI components into your existing main.py:
-
-1. In DungeonExplorer.__init__():
-   # Add this after creating existing UI components
-   self.modern_ui_creators = upgrade_ui_system(self)
-   
-2. In start_character_creation():
-   # Replace the old character creation with:
-   modern_creator = self.modern_ui_creators['character_creation']()
-   created_player = run_enhanced_character_creation_with_modern_ui(modern_creator, self.screen)
-
-3. In handle_events() for inventory:
-   # Replace old inventory with:
-   if event.key == pygame.K_i:
-       self.modern_inventory_ui = self.modern_ui_creators['inventory_ui']()
-       self.game_state = GameState.INVENTORY
-
-4. Add notification support:
-   # In your main game loop update():
-   if hasattr(self, 'notification_manager'):
-       self.notification_manager.update(1/60)
-   
-   # In your main draw loop:
-   if hasattr(self, 'notification_manager'):
-       self.notification_manager.draw(self.screen)
-"""
+        return ModernizedInventoryUI(game_instance.screen_width, game_instance.screen_height, game_instance.font_file)
+    return {'character_creation': create_modern_character_creation, 'inventory': create_modern_inventory}
